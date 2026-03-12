@@ -100,8 +100,8 @@ export default function AssetForm() {
     formState: { errors, isSubmitting },
     watch,
   } = useForm<FormValues>({
-    resolver: zodResolver(Schema),
-    defaultValues: {
+      resolver: zodResolver(Schema),
+      defaultValues: {
       lifeState: 'ACTIVE',
       siteId: null,
       assignedWarehouseId: null,

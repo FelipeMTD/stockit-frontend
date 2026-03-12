@@ -86,27 +86,27 @@ export default function AssetTable() {
   ]);
 
   const { data, isLoading } = useQuery({
-    // Agregamos page a la queryKey
-    queryKey: ['assets', { dq, ...filters, pageSize, page }],
-    queryFn: async () => {
-      const params: Record<string, any> = {
-        pageSize,
-        page, // asumimos página 1-based
-      };
-      if (dq) params.q = dq;
-      if (filters.categoryId) params.categoryId = filters.categoryId;
-      if (filters.siteId) params.siteId = filters.siteId;
-      if (filters.status) params.status = filters.status;
-      if (filters.lifeState) params.lifeState = filters.lifeState;
-      if (filters.acquisitionType) params.acquisitionType = filters.acquisitionType;
+      queryKey: ['assets', { dq, ...filters, pageSize, page }],
+      queryFn: async () => {
+        const params: Record<string, any> = {
+          pageSize,
+          page,
+        };
+        if (dq) params.q = dq;
+        if (filters.categoryId) params.categoryId = filters.categoryId;
+        if (filters.siteId) params.siteId = filters.siteId;
+        if (filters.status) params.status = filters.status;
+        if (filters.lifeState) params.lifeState = filters.lifeState;
+        if (filters.acquisitionType) params.acquisitionType = filters.acquisitionType;
 
-      const { data } = await api.get<Paginated<Asset>>('/api/assets', { params });
-      return data;
-    },
-    keepPreviousData: true,
-    staleTime: 30_000,
-    gcTime: 5 * 60_000,
-  });
+        const { data } = await api.get<Paginated<Asset>>('/api/assets', { params });
+        return data;
+      },
+      // CAMBIO VITAL PARA V5:
+      placeholderData: (previousData) => previousData, 
+      staleTime: 30_000,
+      gcTime: 5 * 60_000,
+    });
 
   const clearFilters = () =>
     setFilters({
@@ -318,8 +318,7 @@ export default function AssetTable() {
           const custDoc =
             (anyA.currentCustodian?.documentId as string | undefined) ?? null;
 
-          const uiLocation =
-            (anyA.currentLocationLabel as string | undefined) ?? null;
+          const uiLocation = anyA.currentLocation?.name ?? anyA.currentLocationLabel ?? null;
           const siteName = anyA.site?.name ?? null;
 
           return (
