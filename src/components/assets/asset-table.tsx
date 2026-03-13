@@ -47,6 +47,13 @@ const ACQ_OPTIONS = [
 ];
 
 export default function AssetTable() {
+  const qc = useQueryClient();
+
+  // 1. ESTADOS DE LA PAPELERA Y ROLES
+  const [isTrashMode, setIsTrashMode] = useState(false);
+  const userRole = typeof window !== 'undefined' ? localStorage.getItem('user_role') : null;
+  const canManageTrash = userRole === 'ACTIVOS_FIJOS' || userRole === 'SUPER_ADMIN';
+
   const [q, setQ] = useState('');
   const dq = useDebounced(q.trim(), 350);
 
@@ -62,7 +69,7 @@ export default function AssetTable() {
     categoryId: string;
     siteId: string;
     status: string;
-    lifeState: string; // "estado operativo" (activo/inactivo/retirado)
+    lifeState: string;
     acquisitionType: string;
   }>({
     categoryId: '',
@@ -85,13 +92,18 @@ export default function AssetTable() {
     pageSize,
   ]);
 
+  // 2. QUERY ACTUALIZADA (Soporta Trash)
   const { data, isLoading } = useQuery({
-      queryKey: ['assets', { dq, ...filters, pageSize, page }],
+      queryKey: ['assets', { dq, ...filters, pageSize, page, isTrashMode }],
       queryFn: async () => {
         const params: Record<string, any> = {
           pageSize,
           page,
         };
+        
+        // Pide la papelera si el modo está activo
+        if (isTrashMode) params.trash = true;
+
         if (dq) params.q = dq;
         if (filters.categoryId) params.categoryId = filters.categoryId;
         if (filters.siteId) params.siteId = filters.siteId;
@@ -102,11 +114,29 @@ export default function AssetTable() {
         const { data } = await api.get<Paginated<Asset>>('/api/assets', { params });
         return data;
       },
-      // CAMBIO VITAL PARA V5:
       placeholderData: (previousData) => previousData, 
       staleTime: 30_000,
       gcTime: 5 * 60_000,
     });
+
+  // 3. MUTACIONES DE LA PAPELERA
+  const restoreMut = useMutation({
+    mutationFn: async (id: string) => api.post(`/api/assets/${id}/restore`),
+    onSuccess: () => {
+      toast.success('Activo restaurado exitosamente');
+      qc.invalidateQueries({ queryKey: ['assets'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Error al restaurar'),
+  });
+
+  const hardDeleteMut = useMutation({
+    mutationFn: async (id: string) => api.delete(`/api/assets/${id}/hard`),
+    onSuccess: () => {
+      toast.success('Activo eliminado permanentemente');
+      qc.invalidateQueries({ queryKey: ['assets'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Error al eliminar'),
+  });
 
   const clearFilters = () =>
     setFilters({
@@ -253,14 +283,33 @@ export default function AssetTable() {
           </select>
         </div>
 
-        {/* Bloque tipo snippet: limpiar + texto + paginación */}
-        <div className="flex items-center justify-between text-xs text-slate-500">
-          <button
-            onClick={clearFilters}
-            className="rounded-lg border px-3 py-1.5 text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            Limpiar filtros
-          </button>
+        {/* 4. BOTONES LIMPIAR FILTROS Y PAPELERA */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between text-xs text-slate-500 gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={clearFilters}
+              className="rounded-lg border px-3 py-1.5 text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              Limpiar filtros
+            </button>
+            
+            {/* Solo lo ven quienes tengan permiso */}
+            {canManageTrash && (
+              <button
+                onClick={() => {
+                  setIsTrashMode(!isTrashMode);
+                  setPage(1);
+                }}
+                className={`rounded-lg border px-3 py-1.5 font-medium transition-colors ${
+                  isTrashMode 
+                    ? 'bg-rose-100 text-rose-700 border-rose-300 hover:bg-rose-200 dark:bg-rose-900/30 dark:text-rose-400' 
+                    : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800'
+                }`}
+              >
+                {isTrashMode ? '← Ocultar Papelera' : '🗑️ Ver Papelera'}
+              </button>
+            )}
+          </div>
 
           <div className="flex items-center gap-4">
             <span>
@@ -307,14 +356,15 @@ export default function AssetTable() {
         )}
 
         {!isLoading && items.length === 0 && (
-          <div className="text-sm text-slate-500">Sin resultados.</div>
+          <div className="text-sm text-slate-500">
+            {isTrashMode ? 'La papelera está vacía.' : 'Sin resultados.'}
+          </div>
         )}
 
         {items.map((a) => {
           const anyA: any = a;
           const custName = a.currentCustodian?.fullName ?? null;
 
-          // 🔹 Aquí estaba el error: antes usabas `.doc`
           const custDoc =
             (anyA.currentCustodian?.documentId as string | undefined) ?? null;
 
@@ -324,7 +374,9 @@ export default function AssetTable() {
           return (
             <div
               key={a.id}
-              className="rounded-xl border bg-white dark:bg-slate-900 p-3"
+              className={`rounded-xl border p-3 ${
+                isTrashMode ? 'bg-rose-50 border-rose-100 dark:bg-rose-950/20 dark:border-rose-900/50' : 'bg-white dark:bg-slate-900'
+              }`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
@@ -369,173 +421,51 @@ export default function AssetTable() {
                   </div>
                 </div>
 
-                <Link
-                  href={`/assets/${a.id}`}
-                  className="text-sm text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white inline-flex items-center gap-1 shrink-0"
-                >
-                  Ver
-                  <svg
-                    className="h-4 w-4"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                  >
-                    <path d="M9 18l6-6-6-6" />
-                  </svg>
-                </Link>
+                {/* 5. BOTONES DE ACCIÓN DINÁMICOS */}
+                <div className="flex flex-col items-end gap-2 shrink-0">
+                  {isTrashMode ? (
+                    <>
+                      <button
+                        onClick={() => restoreMut.mutate(a.id)}
+                        disabled={restoreMut.isPending}
+                        className="text-xs px-3 py-1.5 font-medium bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors"
+                      >
+                        Restaurar
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm('¿Seguro que deseas eliminar este activo PARA SIEMPRE? Esta acción no se puede deshacer.')) {
+                            hardDeleteMut.mutate(a.id);
+                          }
+                        }}
+                        disabled={hardDeleteMut.isPending}
+                        className="text-xs px-3 py-1.5 font-medium bg-rose-600 text-white rounded-lg hover:bg-rose-700 transition-colors"
+                      >
+                        Destruir
+                      </button>
+                    </>
+                  ) : (
+                    <Link
+                      href={`/assets/${a.id}`}
+                      className="text-sm text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white inline-flex items-center gap-1"
+                    >
+                      Ver
+                      <svg
+                        className="h-4 w-4"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <path d="M9 18l6-6-6-6" />
+                      </svg>
+                    </Link>
+                  )}
+                </div>
               </div>
             </div>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-/* =========================
-   Modal de creación de activo
-   ========================= */
-function CreateAssetModal({ onClose }: { onClose: () => void }) {
-  const qc = useQueryClient();
-  const sites = useSites();
-
-  const [form, setForm] = useState({
-    tag: '',
-    name: '',
-    serial: '',
-    siteId: '',
-  });
-
-  const create = useMutation({
-    mutationFn: async () => {
-      const payload = {
-        tag: form.tag.trim(),
-        name: form.name.trim(),
-        serial: form.serial.trim() || null,
-        siteId: form.siteId || null,
-      };
-      if (!payload.tag) throw new Error('El código es obligatorio');
-      if (!payload.name) throw new Error('El nombre es obligatorio');
-
-      return (await api.post('/api/assets', payload)).data;
-    },
-    onSuccess: () => {
-      toast.success('Activo creado');
-      qc.invalidateQueries({ queryKey: ['assets'] });
-      qc.invalidateQueries({
-        predicate: (q) => String(q.queryKey[0]).startsWith('asset'),
-      });
-      onClose();
-    },
-    onError: (e: any) => {
-      toast.error(
-        e?.response?.data?.error ??
-          e?.message ??
-          'No se pudo crear el activo'
-      );
-    },
-  });
-
-  return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-black/30 p-4">
-      <div className="w-full max-w-lg rounded-2xl border bg-white dark:bg-slate-900 p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-semibold">Nuevo activo</h3>
-          <button
-            onClick={onClose}
-            className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-            aria-label="Cerrar"
-          >
-            ✕
-          </button>
-        </div>
-
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            create.mutate();
-          }}
-          className="space-y-3"
-        >
-          <div className="grid sm:grid-cols-2 gap-3">
-            <div className="grid gap-1.5">
-              <label className="text-sm">
-                Código (tag) <span className="text-rose-500">*</span>
-              </label>
-              <input
-                value={form.tag}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, tag: e.target.value }))
-                }
-                placeholder="ACT-0001"
-                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-              />
-            </div>
-
-            <div className="grid gap-1.5">
-              <label className="text-sm">
-                Nombre <span className="text-rose-500">*</span>
-              </label>
-              <input
-                value={form.name}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, name: e.target.value }))
-                }
-                placeholder="Portátil Dell"
-                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-              />
-            </div>
-
-            <div className="grid gap-1.5">
-              <label className="text-sm">Serie</label>
-              <input
-                value={form.serial}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, serial: e.target.value }))
-                }
-                placeholder="SN-ABC-123"
-                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-              />
-            </div>
-
-            {/* Sede */}
-            <div className="grid gap-1.5">
-              <label className="text-sm">Sede</label>
-              <select
-                value={form.siteId}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, siteId: e.target.value }))
-                }
-                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-              >
-                <option value="">—</option>
-                {sites.data?.map((s: any) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="text-sm px-3 py-2 rounded-lg border hover:bg-slate-50 dark:hover:bg-slate-800"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={create.isPending}
-              className="text-sm px-3 py-2 rounded-lg bg-gradient-to-r from-brand to-accent text-white hover:opacity-95 disabled:opacity-60"
-            >
-              {create.isPending ? 'Creando…' : 'Crear activo'}
-            </button>
-          </div>
-        </form>
       </div>
     </div>
   );
