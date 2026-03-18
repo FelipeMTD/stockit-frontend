@@ -16,7 +16,7 @@ import SitesPanel from '@/components/settings/sites-panel';
 import Guard from '@/components/auth-guard';
 
 /* ────────────────────────────────────────────────────────────────────────────
-   Data hooks locales (categorías/ubicaciones)
+   Data hooks locales
 ──────────────────────────────────────────────────────────────────────────── */
 function useCategories() {
   return useQuery({
@@ -33,6 +33,27 @@ function useCreateCategory() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['categories'] });
       toast.success('Categoría creada');
+    },
+  });
+}
+
+// 👇 NUEVOS HOOKS PARA LOS NOMBRES DE CATEGORÍA
+function useAddCategoryName() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { categoryId: string; name: string }) =>
+      api.post('/api/catalog/category-names', data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['categories'] });
+    },
+  });
+}
+function useRemoveCategoryName() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/catalog/category-names/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['categories'] });
     },
   });
 }
@@ -61,7 +82,7 @@ function useCreateLocation() {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   Página de Configuraciones (protegida con Guard)
+   Página de Configuraciones
 ──────────────────────────────────────────────────────────────────────────── */
 export default function SettingsPage() {
   const [tab, setTab] = useState<'categories' | 'locations' | 'users'>('categories');
@@ -71,37 +92,36 @@ export default function SettingsPage() {
       <section className="space-y-4">
         <h1 className="text-xl font-semibold">Configuraciones</h1>
 
-        {/* Pestañas */}
-        <div className="rounded-xl border bg-white dark:bg-slate-900 p-2 flex gap-2">
+        <div className="rounded-xl border bg-white dark:bg-slate-900 p-2 flex gap-2 overflow-x-auto">
           <button
             onClick={() => setTab('categories')}
-            className={`px-3 py-2 rounded-lg text-sm ${
+            className={`px-3 py-2 whitespace-nowrap rounded-lg text-sm ${
               tab === 'categories'
                 ? 'bg-slate-100 dark:bg-slate-800 font-medium'
                 : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'
             }`}
           >
-            Categorías
+            Categorias y Activos
           </button>
           <button
             onClick={() => setTab('locations')}
-            className={`px-3 py-2 rounded-lg text-sm ${
+            className={`px-3 py-2 whitespace-nowrap rounded-lg text-sm ${
               tab === 'locations'
                 ? 'bg-slate-100 dark:bg-slate-800 font-medium'
                 : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'
             }`}
           >
-            Ubicaciones
+            Ubicaciones y Sedes
           </button>
           <button
             onClick={() => setTab('users')}
-            className={`px-3 py-2 rounded-lg text-sm ${
+            className={`px-3 py-2 whitespace-nowrap rounded-lg text-sm ${
               tab === 'users'
                 ? 'bg-slate-100 dark:bg-slate-800 font-medium'
                 : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'
             }`}
           >
-            Usuarios
+            Usuarios del sistema
           </button>
         </div>
 
@@ -119,12 +139,19 @@ export default function SettingsPage() {
 function CategoriesPanel() {
   const list = useCategories();
   const create = useCreateCategory();
-
   const upd = useUpdateCategory();
   const del = useDeleteCategory();
 
+  // Hooks para nombres
+  const addName = useAddCategoryName();
+  const removeName = useRemoveCategoryName();
+
   const [editing, setEditing] = useState<any | null>(null);
   const [confirmDel, setConfirmDel] = useState<any | null>(null);
+  
+  // Estado para el modal de gestionar nombres
+  const [managingNames, setManagingNames] = useState<any | null>(null);
+  const [newName, setNewName] = useState('');
 
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
@@ -138,6 +165,12 @@ function CategoriesPanel() {
     setCode('');
     setDescription('');
   }
+
+  // Refresca la data del modal si cambia en background
+  const currentManagingCategory = useMemo(() => {
+    if (!managingNames || !list.data) return null;
+    return list.data.find((c: any) => c.id === managingNames.id) || managingNames;
+  }, [managingNames, list.data]);
 
   return (
     <div className="grid md:grid-cols-2 gap-4">
@@ -183,22 +216,32 @@ function CategoriesPanel() {
 
       {/* Lista */}
       <div className="border rounded-xl bg-white dark:bg-slate-900 p-4">
-        <h3 className="font-medium mb-2">Categorías</h3>
+        <h3 className="font-medium mb-2">Categorías creadas</h3>
         <ul className="divide-y">
           {list.data?.map((c: any) => (
-            <li key={c.id} className="py-2 text-sm flex items-center justify-between">
+            <li key={c.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <div className="font-medium">{c.name}</div>
-                <div className="text-xs text-slate-500">{c.code || '—'}</div>
+                <div className="font-medium text-sm">{c.name}</div>
+                <div className="text-xs text-slate-500">
+                  {c.code ? `Código: ${c.code} · ` : ''} 
+                  {c.allowedNames?.length || 0} tipos de activos
+                </div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 shrink-0">
+                {/* 👇 AQUÍ CAMBIAMOS EL TEXTO DEL BOTÓN */}
                 <button
-                  className="border rounded-xl  text-blue-900 px-2 py-1 text-xs  hover:border-blue-900 "
+                  className="border rounded-xl text-emerald-700 px-2 py-1 text-xs hover:border-emerald-700 dark:text-emerald-400 dark:border-slate-700 dark:hover:border-emerald-400"
+                  onClick={() => setManagingNames(c)}
+                >
+                  Agregar Activo
+                </button>
+                <button
+                  className="border rounded-xl text-blue-900 px-2 py-1 text-xs hover:border-blue-900"
                   onClick={() => setEditing({ ...c })}
                 >
                   Editar
                 </button>
-                <button className="text-rose-600 text-xs " onClick={() => setConfirmDel(c)}>
+                <button className="text-rose-600 text-xs hover:underline" onClick={() => setConfirmDel(c)}>
                   Eliminar
                 </button>
               </div>
@@ -209,9 +252,86 @@ function CategoriesPanel() {
           )}
         </ul>
 
+        {/* MODAL: Gestionar Nombres de la Categoría */}
+        {managingNames && currentManagingCategory && (
+          <div className="fixed inset-0 bg-black/40 z-50 grid place-items-center p-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl border bg-white dark:bg-slate-900 p-5 space-y-4 shadow-xl">
+              <div className="flex justify-between items-center border-b pb-3 dark:border-slate-800">
+                <div>
+                  <h4 className="font-semibold text-lg">Catálogo de Activos</h4>
+                  <p className="text-xs text-slate-500">Categoría: {currentManagingCategory.name}</p>
+                </div>
+                <button 
+                  onClick={() => { setManagingNames(null); setNewName(''); }} 
+                  className="text-slate-400 hover:bg-slate-100 hover:text-slate-700 p-2 rounded-lg dark:hover:bg-slate-800"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Input para agregar */}
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                if (!newName.trim()) return;
+                try {
+                  await addName.mutateAsync({ categoryId: currentManagingCategory.id, name: newName });
+                  setNewName('');
+                  toast.success('Activo agregado correctamente');
+                } catch (err: any) {
+                  toast.error(err?.response?.data?.error || 'Error al agregar');
+                }
+              }} className="flex gap-2">
+                <input 
+                  className="flex-1 rounded-xl border px-3 py-2 text-sm bg-slate-50 dark:bg-slate-950 focus:bg-white"
+                  placeholder="Ej: SILLA ERGONOMICA" 
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                />
+                <button 
+                  disabled={addName.isPending} 
+                  className="bg-lime-500 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-lime-600 disabled:opacity-60 transition-colors"
+                >
+                  Guardar
+                </button>
+              </form>
+
+              {/* Lista de nombres permitidos */}
+              <div className="border rounded-xl overflow-hidden bg-slate-50 dark:bg-slate-950/50">
+                <ul className="max-h-60 overflow-y-auto divide-y dark:divide-slate-800">
+                  {currentManagingCategory.allowedNames?.map((n: any) => (
+                    <li key={n.id} className="p-3 text-sm flex justify-between items-center hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors">
+                      <span className="font-medium text-slate-700 dark:text-slate-300">{n.name}</span>
+                      <button 
+                        className="text-xs text-rose-500 hover:text-rose-700 font-medium px-2 py-1 rounded hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
+                        onClick={async () => {
+                          if (confirm(`¿Eliminar "${n.name}" del catálogo? (No afectará a los activos que ya lo usan)`)) {
+                             try {
+                               await removeName.mutateAsync(n.id);
+                               toast.success('Activo eliminado de la lista');
+                             } catch(err) {
+                               toast.error('Error al eliminar');
+                             }
+                          }
+                        }}
+                      >
+                        Borrar
+                      </button>
+                    </li>
+                  ))}
+                  {(!currentManagingCategory.allowedNames || currentManagingCategory.allowedNames.length === 0) && (
+                    <li className="p-6 text-center text-slate-500 text-sm">
+                      Aún no hay tipos de activos registrados.
+                    </li>
+                  )}
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Modal de edición */}
         {editing && (
-          <div className="fixed inset-0 bg-black/30 grid place-items-center p-4">
+          <div className="fixed inset-0 bg-black/30 grid place-items-center p-4 z-40">
             <div className="w-full max-w-sm rounded-xl border bg-white dark:bg-slate-900 p-4 space-y-3">
               <h4 className="font-medium">Editar categoría</h4>
               <div className="grid gap-1.5">
@@ -262,7 +382,7 @@ function CategoriesPanel() {
 
         {/* Confirmación de borrado */}
         {confirmDel && (
-          <div className="fixed inset-0 bg-black/30 grid place-items-center p-4">
+          <div className="fixed inset-0 bg-black/30 grid place-items-center p-4 z-40">
             <div className="w-full max-w-sm rounded-xl border bg-white dark:bg-slate-900 p-4 space-y-3">
               <h4 className="font-medium">Eliminar categoría</h4>
               <p className="text-sm text-slate-600">
@@ -422,7 +542,7 @@ function LocationsPanel() {
 
           {/* Modal editar */}
           {editing && (
-            <div className="fixed inset-0 bg-black/30 grid place-items-center p-4">
+            <div className="fixed inset-0 bg-black/30 grid place-items-center p-4 z-40">
               <div className="w-full max-w-sm rounded-xl border bg-white dark:bg-slate-900 p-4 space-y-3">
                 <h4 className="font-medium">Editar ubicación</h4>
                 <div className="grid gap-1.5">
@@ -499,7 +619,7 @@ function LocationsPanel() {
 
           {/* Confirmación borrar */}
           {confirmDel && (
-            <div className="fixed inset-0 bg-black/30 grid place-items-center p-4">
+            <div className="fixed inset-0 bg-black/30 grid place-items-center p-4 z-40">
               <div className="w-full max-w-sm rounded-xl border bg-white dark:bg-slate-900 p-4 space-y-3">
                 <h4 className="font-medium">Eliminar ubicación</h4>
                 <p className="text-sm text-slate-600">
@@ -574,13 +694,14 @@ function UsersPanel() {
             return toast.error('Completa documento, nombre y contraseña');
           }
           try {
+            // 👇 CORRECCIÓN AQUÍ: Forzamos el as any para ignorar las reglas viejas
             await create.mutateAsync({
               documentId: f.documentId.trim(),
-              email: f.email.trim() || null,
+              email: f.email.trim() || undefined,
               name: f.name.trim(),
-              role: f.role as any,
+              role: f.role,
               password: f.password,
-            });
+            } as any);
             toast.success('Usuario creado');
             setF({ documentId: '', email: '', name: '', role: 'INVENTARIO', password: '' });
           } catch (e: any) {
@@ -716,7 +837,7 @@ function UsersPanel() {
 
       {/* Modal editar */}
       {editing && (
-        <div className="fixed inset-0 bg-black/30 grid place-items-center p-4">
+        <div className="fixed inset-0 bg-black/30 grid place-items-center p-4 z-40">
           <div className="w-full max-w-sm rounded-xl border bg-white dark:bg-slate-900 p-4 space-y-3">
             <h4 className="font-medium">Editar usuario</h4>
             <div className="grid gap-1.5">
@@ -765,14 +886,15 @@ function UsersPanel() {
               <button
                 className="rounded-xl bg-lime-500 from-brand to-accent text-white px-4 py-2 text-sm hover:bg-sky-900 disabled:opacity-60"
                 onClick={async () => {
+                  // 👇 CORRECCIÓN AQUÍ: Forzamos as any en la actualización también
                   await upd.mutateAsync({
                     id: editing.id,
                     data: {
                       documentId: editing.documentId,
-                      email: editing.email || null,
+                      email: editing.email || undefined,
                       name: editing.name,
                       role: editing.role,
-                    },
+                    } as any, 
                   });
                   setEditing(null);
                   toast.success('Usuario actualizado');
@@ -787,7 +909,7 @@ function UsersPanel() {
 
       {/* Modal reset clave */}
       {changingPwd && (
-        <div className="fixed inset-0 bg-black/30 grid place-items-center p-4">
+        <div className="fixed inset-0 bg-black/30 grid place-items-center p-4 z-40">
           <div className="w-full max-w-sm rounded-xl border bg-white dark:bg-slate-900 p-4 space-y-3">
             <h4 className="font-medium">Resetear contraseña</h4>
             <p className="text-xs text-slate-500">

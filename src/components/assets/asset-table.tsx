@@ -20,7 +20,6 @@ function useDebounced<T>(value: T, delay = 350) {
   return v;
 }
 
-// Ajusta si tu backend maneja otros valores
 const STATUS_OPTIONS = [
   { value: '', label: 'Todos' },
   { value: 'IN_STOCK', label: 'En bodega' },
@@ -49,7 +48,6 @@ const ACQ_OPTIONS = [
 export default function AssetTable() {
   const qc = useQueryClient();
 
-  // 1. ESTADOS DE LA PAPELERA Y ROLES
   const [isTrashMode, setIsTrashMode] = useState(false);
   const userRole = typeof window !== 'undefined' ? localStorage.getItem('user_role') : null;
   const canManageTrash = userRole === 'ACTIVOS_FIJOS' || userRole === 'SUPER_ADMIN';
@@ -57,11 +55,9 @@ export default function AssetTable() {
   const [q, setQ] = useState('');
   const dq = useDebounced(q.trim(), 350);
 
-  // Tamaño de página y página actual
   const [pageSize, setPageSize] = useState<number>(10);
   const [page, setPage] = useState<number>(1);
 
-  // Filtros
   const categories = useCategories();
   const sites = useSites();
 
@@ -79,7 +75,6 @@ export default function AssetTable() {
     acquisitionType: '',
   });
 
-  // Resetear a página 1 cuando cambian filtros / búsqueda / pageSize
   useEffect(() => {
     setPage(1);
   }, [
@@ -92,7 +87,6 @@ export default function AssetTable() {
     pageSize,
   ]);
 
-  // 2. QUERY ACTUALIZADA (Soporta Trash)
   const { data, isLoading } = useQuery({
       queryKey: ['assets', { dq, ...filters, pageSize, page, isTrashMode }],
       queryFn: async () => {
@@ -101,7 +95,6 @@ export default function AssetTable() {
           page,
         };
         
-        // Pide la papelera si el modo está activo
         if (isTrashMode) params.trash = true;
 
         if (dq) params.q = dq;
@@ -119,7 +112,6 @@ export default function AssetTable() {
       gcTime: 5 * 60_000,
     });
 
-  // 3. MUTACIONES DE LA PAPELERA
   const restoreMut = useMutation({
     mutationFn: async (id: string) => api.post(`/api/assets/${id}/restore`),
     onSuccess: () => {
@@ -161,11 +153,8 @@ export default function AssetTable() {
 
   return (
     <div className="space-y-4">
-      {/* Barra de búsqueda y filtros */}
       <div className="flex flex-col gap-3">
-        {/* Arriba: buscador + selector de cantidad (estilo "Mostrar:") */}
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          {/* Buscador */}
           <div className="relative flex-1">
             <input
               value={q}
@@ -187,7 +176,6 @@ export default function AssetTable() {
             </svg>
           </div>
 
-          {/* Selector de tamaño de página, estilo similar al snippet */}
           <div className="flex items-center gap-2 self-end sm:self-auto text-xs text-slate-500">
             <span>Mostrar:</span>
             <select
@@ -203,9 +191,7 @@ export default function AssetTable() {
           </div>
         </div>
 
-        {/* Selectores de filtros */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
-          {/* Categoría */}
           <select
             className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
             value={filters.categoryId}
@@ -221,7 +207,6 @@ export default function AssetTable() {
             ))}
           </select>
 
-          {/* Sede */}
           <select
             className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
             value={filters.siteId}
@@ -237,7 +222,6 @@ export default function AssetTable() {
             ))}
           </select>
 
-          {/* Estado (status) */}
           <select
             className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
             value={filters.status}
@@ -252,7 +236,6 @@ export default function AssetTable() {
             ))}
           </select>
 
-          {/* Estado operativo (lifeState) */}
           <select
             className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
             value={filters.lifeState}
@@ -267,7 +250,6 @@ export default function AssetTable() {
             ))}
           </select>
 
-          {/* Tipo de adquisición */}
           <select
             className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
             value={filters.acquisitionType}
@@ -283,7 +265,6 @@ export default function AssetTable() {
           </select>
         </div>
 
-        {/* 4. BOTONES LIMPIAR FILTROS Y PAPELERA */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between text-xs text-slate-500 gap-3">
           <div className="flex items-center gap-2">
             <button
@@ -293,7 +274,6 @@ export default function AssetTable() {
               Limpiar filtros
             </button>
             
-            {/* Solo lo ven quienes tengan permiso */}
             {canManageTrash && (
               <button
                 onClick={() => {
@@ -349,7 +329,6 @@ export default function AssetTable() {
         </div>
       </div>
 
-      {/* Lista */}
       <div className="space-y-3">
         {isLoading && (
           <div className="text-sm text-slate-500">Cargando activos…</div>
@@ -364,10 +343,7 @@ export default function AssetTable() {
         {items.map((a) => {
           const anyA: any = a;
           const custName = a.currentCustodian?.fullName ?? null;
-
-          const custDoc =
-            (anyA.currentCustodian?.documentId as string | undefined) ?? null;
-
+          const custDoc = (anyA.currentCustodian?.documentId as string | undefined) ?? null;
           const uiLocation = anyA.currentLocation?.name ?? anyA.currentLocationLabel ?? null;
           const siteName = anyA.site?.name ?? null;
 
@@ -397,7 +373,6 @@ export default function AssetTable() {
                     {a.name}
                   </div>
 
-                  {/* Meta */}
                   <div className="text-xs text-slate-500 mt-1 flex flex-wrap gap-x-3 gap-y-1">
                     <span className="truncate">
                       Custodio:{' '}
@@ -421,7 +396,6 @@ export default function AssetTable() {
                   </div>
                 </div>
 
-                {/* 5. BOTONES DE ACCIÓN DINÁMICOS */}
                 <div className="flex flex-col items-end gap-2 shrink-0">
                   {isTrashMode ? (
                     <>
@@ -466,6 +440,179 @@ export default function AssetTable() {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/* =========================
+   Modal de creación de activo
+   ========================= */
+function CreateAssetModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const sites = useSites();
+  const categories = useCategories(); 
+
+  const [form, setForm] = useState({
+    tag: '',
+    categoryId: '', 
+    name: '',       
+    serial: '',
+    siteId: '',
+  });
+
+  const selectedCategory = (categories.data as any[])?.find((c: any) => c.id === form.categoryId);
+  const availableNames = selectedCategory?.allowedNames || [];
+
+  const create = useMutation({
+    mutationFn: async () => {
+      const payload = {
+        tag: form.tag.trim(),
+        categoryId: form.categoryId || null,
+        name: form.name.trim(),
+        serial: form.serial.trim() || null,
+        siteId: form.siteId || null,
+      };
+      if (!payload.tag) throw new Error('El código es obligatorio');
+      if (!payload.categoryId) throw new Error('Debe seleccionar una categoría');
+      if (!payload.name) throw new Error('Debe seleccionar un nombre válido');
+
+      return (await api.post('/api/assets', payload)).data;
+    },
+    onSuccess: () => {
+      toast.success('Activo creado');
+      qc.invalidateQueries({ queryKey: ['assets'] });
+      qc.invalidateQueries({
+        predicate: (q) => String(q.queryKey[0]).startsWith('asset'),
+      });
+      onClose();
+    },
+    onError: (e: any) => {
+      toast.error(
+        e?.response?.data?.error ??
+          e?.message ??
+          'No se pudo crear el activo'
+      );
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 z-40 grid place-items-center bg-black/30 p-4">
+      <div className="w-full max-w-lg rounded-2xl border bg-white dark:bg-slate-900 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold">Nuevo activo</h3>
+          <button
+            onClick={onClose}
+            className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+            aria-label="Cerrar"
+          >
+            ✕
+          </button>
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            create.mutate();
+          }}
+          className="space-y-3"
+        >
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <label className="text-sm">
+                Código (tag) <span className="text-rose-500">*</span>
+              </label>
+              <input
+                value={form.tag}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, tag: e.target.value }))
+                }
+                placeholder="ACT-0001"
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              />
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Categoría <span className="text-rose-500">*</span></label>
+              <select
+                value={form.categoryId}
+                onChange={(e) => {
+                  setForm((s) => ({ ...s, categoryId: e.target.value, name: '' }));
+                }}
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              >
+                <option value="">Seleccione categoría...</option>
+                {categories.data?.map((c: any) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Nombre del activo <span className="text-rose-500">*</span></label>
+              <select
+                value={form.name}
+                onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
+                disabled={!form.categoryId}
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <option value="">
+                  {!form.categoryId ? 'Elija una categoría primero' : 'Seleccione el nombre...'}
+                </option>
+                {availableNames.map((n: any) => (
+                  <option key={n.id} value={n.name}>{n.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Serie</label>
+              <input
+                value={form.serial}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, serial: e.target.value }))
+                }
+                placeholder="SN-ABC-123"
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              />
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Sede</label>
+              <select
+                value={form.siteId}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, siteId: e.target.value }))
+                }
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              >
+                <option value="">—</option>
+                {sites.data?.map((s: any) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-sm px-3 py-2 rounded-lg border hover:bg-slate-50 dark:hover:bg-slate-800"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={create.isPending}
+              className="text-sm px-3 py-2 rounded-lg bg-gradient-to-r from-brand to-accent text-white hover:opacity-95 disabled:opacity-60"
+            >
+              {create.isPending ? 'Creando…' : 'Crear activo'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
