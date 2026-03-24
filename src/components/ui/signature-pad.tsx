@@ -1,7 +1,7 @@
 'use client';
 import dynamic from 'next/dynamic';
 import { useEffect, useRef } from 'react';
-const SignatureCanvas = dynamic(() => import('react-signature-canvas'), { ssr: false });
+const SignatureCanvas: any = dynamic(() => import('react-signature-canvas'), { ssr: false });
 
 type Props = {
   value?: string | null;
@@ -11,8 +11,11 @@ type Props = {
 export default function SignaturePad({ value, onChange }: Props) {
   const ref = useRef<any>(null);
 
+  // 👇 NUEVO EFECTO: Si el componente padre envía un valor vacío/nulo, limpia el lienzo
   useEffect(() => {
-    // si quieres precargar una firma desde value, aquí podrías hacerlo
+    if (!value && ref.current) {
+      ref.current.clear();
+    }
   }, [value]);
 
   const clear = () => {

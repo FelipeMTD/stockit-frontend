@@ -453,6 +453,7 @@ export default function HandoverPage() {
         if (!form.signerName.trim()) throw new Error('Falta el nombre de quien firma');
         if (!form.signerId.trim()) throw new Error('Falta la identificación de quien firma');
         if (!form.relation) throw new Error('Selecciona el parentesco/relación');
+        if (!form.signatureData) throw new Error('La firma en pantalla es obligatoria');
       }
 
       const payload = buildPayload(form);
