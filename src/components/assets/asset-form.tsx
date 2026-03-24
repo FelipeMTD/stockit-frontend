@@ -18,67 +18,34 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-/**
- * Normaliza enums desde inputs típicos:
- * - "NO APLICA" / "NO_APLICA" / "NA" / "N/A" => "NO_APLICA"
- */
-const zRiskLevel = z.preprocess((val) => {
-  if (val == null) return val;
-  const raw = String(val).trim();
-  if (!raw) return null;
-
-  const up = raw.toUpperCase();
-  if (up === 'NO APLICA' || up === 'NO_APLICA' || up === 'NA' || up === 'N/A') {
-    return 'NO_APLICA';
-  }
-  return up;
-}, z.enum(['I', 'IIA', 'IIB', 'III', 'NO_APLICA']));
-
-const zMaintenanceFrequency = z.preprocess((val) => {
-  if (val == null) return val;
-  const raw = String(val).trim();
-  if (!raw) return null;
-
-  const up = raw.toUpperCase();
-  if (up === 'NO APLICA' || up === 'NO_APLICA' || up === 'NA' || up === 'N/A') {
-    return 'NO_APLICA';
-  }
-  return up;
-}, z.enum(['ANUAL', 'SEMESTRAL', 'TRIMESTRAL', 'NO_APLICA']));
-
 const Schema = z.object({
   tag: z.string().min(1, 'El código es obligatorio'),
   name: z.string().min(1, 'El nombre es obligatorio'),
 
-  brand: z.string().optional(),
-  model: z.string().optional(),
-  serial: z.string().optional(),
+  brand: z.string().optional().nullable(),
+  model: z.string().optional().nullable(),
+  serial: z.string().optional().nullable(),
   categoryId: z.string().optional().nullable(),
 
   siteId: z.string().optional().nullable(),
   assignedWarehouseId: z.string().optional().nullable(),
 
-  // OJO: esto ya lo tenías así; lo dejo igual para no cambiar comportamiento
-  purchaseDate: z.coerce.date().optional().nullable(),
-  purchaseCost: z.coerce.number().optional().nullable(),
+  purchaseDate: z.string().optional().nullable(),
+  purchaseCost: z.number().or(z.nan()).optional().nullable(),
 
   acquisitionType: z
     .enum(['PURCHASE', 'LEASE', 'DONATION', 'INTERNAL', 'OTHER'])
     .optional()
     .nullable(),
-  supplierName: z.string().optional(),
-  invoiceNumber: z.string().optional(),
-  invimaCode: z.string().optional(),
+  supplierName: z.string().optional().nullable(),
+  invoiceNumber: z.string().optional().nullable(),
+  invimaCode: z.string().optional().nullable(),
 
-  // ✅ Ajustado a nuevo enum
-  riskLevel: zRiskLevel.optional().nullable(),
-
-  // ✅ NUEVO campo
-  maintenanceFrequency: zMaintenanceFrequency.optional().nullable().default('NO_APLICA'),
-
-  warrantyUntil: z.coerce.date().optional().nullable(),
-
-  lifeState: z.enum(['ACTIVE', 'INACTIVE', 'RETIRED']).optional().default('ACTIVE'),
+  riskLevel: z.enum(['I', 'IIA', 'IIB', 'III', 'NO_APLICA']).optional().nullable(),
+  maintenanceFrequency: z.enum(['ANUAL', 'SEMESTRAL', 'TRIMESTRAL', 'NO_APLICA']).optional().nullable(),
+  warrantyUntil: z.string().optional().nullable(),
+  
+  lifeState: z.enum(['ACTIVE', 'INACTIVE', 'RETIRED']).optional().nullable(),
 
   locationId: z.string().optional().nullable(),
   custodianId: z.string().optional().nullable(),
@@ -107,31 +74,29 @@ export default function AssetForm() {
       assignedWarehouseId: null,
       locationId: null,
       custodianId: null,
-
-      // ✅ default razonable
       maintenanceFrequency: 'NO_APLICA',
       riskLevel: null,
     },
   });
 
-  // Normalizamos locations (puede venir como {items} o array)
   const locItemsRaw = (locs.data as any)?.items ?? locs.data ?? [];
   const allLocations: any[] = Array.isArray(locItemsRaw) ? locItemsRaw : [];
 
   const selectedSiteId = watch('siteId') || '';
+  const selectedCategoryId = watch('categoryId') || '';
+  
+  const selectedCategory = (cats.data as any[])?.find((c) => c.id === selectedCategoryId);
+  const availableNames = selectedCategory?.allowedNames || [];
 
-  // Bodegas filtradas por sede
   const warehouses = allLocations.filter((l: any) => {
     const t = String(l?.type ?? '').toLowerCase();
     const isWarehouse = t === 'warehouse' || t.includes('bodega');
     if (!isWarehouse) return false;
-
     if (!selectedSiteId) return true;
     if (!('siteId' in l)) return true;
     return !l.siteId || l.siteId === selectedSiteId;
   });
 
-  // Ubicaciones filtradas por sede (para locationId)
   const locationOptions = allLocations.filter((l: any) => {
     if (!selectedSiteId) return true;
     if (!('siteId' in l)) return true;
@@ -147,19 +112,20 @@ export default function AssetForm() {
         assignedWarehouseId: values.assignedWarehouseId || null,
         locationId: values.locationId || null,
         custodianId: values.custodianId || null,
-
-        // Asegura que si viene vacío quede como null (no basura)
         riskLevel: values.riskLevel || null,
         maintenanceFrequency: values.maintenanceFrequency || 'NO_APLICA',
+        lifeState: values.lifeState || 'ACTIVE',
+        
+        purchaseDate: values.purchaseDate ? new Date(values.purchaseDate).toISOString() : null,
+        warrantyUntil: values.warrantyUntil ? new Date(values.warrantyUntil).toISOString() : null,
+        purchaseCost: Number.isNaN(values.purchaseCost) ? null : values.purchaseCost,
       };
 
       const res = await api.post('/api/assets', payload);
-      toast.success('Activo creado');
+      toast.success('Activo guardado');
       router.push(`/assets/${res.data.id}`);
     } catch (e: any) {
-      // eslint-disable-next-line no-console
-      console.log('POST /api/assets error', e?.response?.data || e);
-      toast.error(e?.response?.data?.error ?? 'No se pudo crear el activo');
+      toast.error(e?.response?.data?.error ?? 'No se pudo guardar el activo');
     }
   };
 
@@ -176,8 +142,45 @@ export default function AssetForm() {
         </div>
 
         <div className="grid gap-1.5">
-          <Label>Nombre *</Label>
-          <Input placeholder="Portátil Dell" {...register('name')} />
+          <Label>Categoría</Label>
+          <Select
+            value={selectedCategoryId}
+            onValueChange={(v) => {
+              setValue('categoryId', v || null, { shouldDirty: true });
+              setValue('name', '', { shouldDirty: true }); 
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder={cats.isLoading ? 'Cargando...' : 'Selecciona categoría'} />
+            </SelectTrigger>
+            <SelectContent>
+              {cats.data?.map((c: any) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="grid gap-1.5">
+          <Label>Nombre del activo *</Label>
+          <Select
+            value={watch('name') ?? ''}
+            onValueChange={(v) => setValue('name', v, { shouldDirty: true, shouldValidate: true })}
+            disabled={!selectedCategoryId}
+          >
+            <SelectTrigger className={errors.name ? 'border-rose-500' : ''}>
+              <SelectValue placeholder={!selectedCategoryId ? "← Elija categoría primero" : "Seleccione nombre..."} />
+            </SelectTrigger>
+            <SelectContent>
+              {availableNames.map((n: any) => (
+                <SelectItem key={n.id} value={n.name}>
+                  {n.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {errors.name && <p className="text-xs text-rose-500">{errors.name.message}</p>}
         </div>
 
@@ -197,32 +200,11 @@ export default function AssetForm() {
         </div>
 
         <div className="grid gap-1.5">
-          <Label>Categoría</Label>
-          <Select
-            value={watch('categoryId') ?? ''}
-            onValueChange={(v) => setValue('categoryId', v || null, { shouldDirty: true })}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder={cats.isLoading ? 'Cargando...' : 'Selecciona categoría'} />
-            </SelectTrigger>
-            <SelectContent>
-              {cats.data?.map((c: any) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* Sede */}
-        <div className="grid gap-1.5">
           <Label>Sede</Label>
           <Select
-            value={watch('siteId') ?? ''}
+            value={selectedSiteId}
             onValueChange={(v) => {
               setValue('siteId', v || null, { shouldDirty: true });
-              // Al cambiar la sede, limpiamos bodega y ubicación
               setValue('assignedWarehouseId', null, { shouldDirty: true });
               setValue('locationId', null, { shouldDirty: true });
             }}
@@ -240,7 +222,6 @@ export default function AssetForm() {
           </Select>
         </div>
 
-        {/* Bodega asignada */}
         <div className="grid gap-1.5">
           <Label>Bodega asignada</Label>
           <Select
@@ -316,7 +297,6 @@ export default function AssetForm() {
           <Input placeholder="2019DM-0012345" {...register('invimaCode')} />
         </div>
 
-        {/* ✅ NUEVO riskLevel */}
         <div className="grid gap-1.5">
           <Label>Nivel de riesgo</Label>
           <Select
@@ -338,7 +318,6 @@ export default function AssetForm() {
           </Select>
         </div>
 
-        {/* ✅ NUEVO maintenanceFrequency */}
         <div className="grid gap-1.5">
           <Label>Frecuencia de mantenimiento</Label>
           <Select
