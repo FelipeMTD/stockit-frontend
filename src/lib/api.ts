@@ -168,3 +168,33 @@ export async function authLogout() {
     redirectToLogin();
   }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   INTERFACES DE DATOS (Agregadas para resolver errores)
+────────────────────────────────────────────────────────────── */
+export interface Asset {
+  id: string;
+  tag: string;
+  name: string;
+  status: string;
+  serial?: string;
+  currentCustodian?: {
+    fullName: string;
+    documentId?: string;
+  };
+  currentLocation?: {
+    name: string;
+  };
+  currentLocationLabel?: string;
+  site?: {
+    name: string;
+  };
+}
+
+export interface Paginated<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+}
