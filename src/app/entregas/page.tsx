@@ -100,10 +100,7 @@ function SimplePicker<T extends { id: string; fullName?: string | null; email?: 
     if (open) setFilter('');
   }, [open]);
 
-  const selected = useMemo(
-    () => items.find((p) => p.id === value) || null,
-    [items, value]
-  );
+  const selected = useMemo(() => items.find((p) => p.id === value) || null, [items, value]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -130,10 +127,7 @@ function SimplePicker<T extends { id: string; fullName?: string | null; email?: 
       </button>
 
       {open && (
-        <div
-          className="absolute z-30 mt-1 w-full rounded-xl border bg-white dark:bg-slate-950 shadow-lg"
-          role="dialog"
-        >
+        <div className="absolute z-30 mt-1 w-full rounded-xl border bg-white dark:bg-slate-950 shadow-lg">
           <div className="p-2 border-b">
             <input
               autoFocus
@@ -145,42 +139,24 @@ function SimplePicker<T extends { id: string; fullName?: string | null; email?: 
           </div>
 
           <div className="max-h-64 overflow-y-auto">
-            {filtered.length === 0 && (
-              <div className="p-3 text-xs text-slate-500">Sin resultados.</div>
-            )}
+            {filtered.length === 0 && <div className="p-3 text-xs text-slate-500">Sin resultados.</div>}
             <ul role="listbox">
               {filtered.map((p: any) => (
                 <li key={p.id}>
                   <button
                     type="button"
-                    onClick={() => {
-                      onChange(p.id);
-                      setOpen(false);
-                    }}
-                    className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 ${
-                      p.id === value ? 'bg-slate-50 dark:bg-slate-800' : ''
-                    }`}
+                    onClick={() => { onChange(p.id); setOpen(false); }}
+                    className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 ${p.id === value ? 'bg-slate-50 dark:bg-slate-800' : ''}`}
                   >
                     <div className="font-medium truncate">{p.fullName || p.email || '—'}</div>
-                    {subtitleOf && (
-                      <div className="text-xs text-slate-500 truncate">
-                        {subtitleOf(p) || '—'}
-                      </div>
-                    )}
+                    {subtitleOf && <div className="text-xs text-slate-500 truncate">{subtitleOf(p) || '—'}</div>}
                   </button>
                 </li>
               ))}
             </ul>
           </div>
-
           <div className="p-2 border-t flex justify-end">
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="rounded-lg border px-3 py-1.5 text-xs"
-            >
-              Cerrar
-            </button>
+            <button type="button" onClick={() => setOpen(false)} className="rounded-lg border px-3 py-1.5 text-xs">Cerrar</button>
           </div>
         </div>
       )}
@@ -188,58 +164,24 @@ function SimplePicker<T extends { id: string; fullName?: string | null; email?: 
   );
 }
 
-const UserPicker = (props: {
-  people: Person;
-  value?: string;
-  onChange: (id: string) => void;
-  disabled?: boolean;
-  placeholder?: string;
-} | any) => (
+const UserPicker = (props: { people: Person; value?: string; onChange: (id: string) => void; disabled?: boolean; placeholder?: string; } | any) => (
   <SimplePicker
     items={props.people as any}
     value={props.value}
     onChange={props.onChange}
     disabled={props.disabled}
     placeholder={props.placeholder}
-    subtitleOf={(p: any) => {
-      const doc = p.documentId || '';
-      const tipo = p.userType || '';
-      const parts = [doc, tipo].filter(Boolean);
-      return parts.length ? parts.join(' - ') : null;
-    }}
+    subtitleOf={(p: any) => [p.documentId || '', p.userType || ''].filter(Boolean).join(' - ') || null}
   />
 );
 
-const DriverPicker = (props: {
-  drivers: Array<{ id: string; name?: string | null; fullName?: string | null; email?: string | null; documentId?: string | null }>;
-  value?: string | null;
-  onChange: (id: string) => void;
-  disabled?: boolean;
-  placeholder?: string;
-}) => {
+const DriverPicker = (props: { drivers: Array<{ id: string; name?: string | null; fullName?: string | null; email?: string | null; documentId?: string | null }>; value?: string | null; onChange: (id: string) => void; disabled?: boolean; placeholder?: string; }) => {
   const items = (props.drivers || []).map((u) => {
-    const baseName =
-      (u.name && u.name.trim()) ||
-      (u.fullName && u.fullName.trim()) ||
-      (u.email && u.email.trim()) ||
-      '';
-    const label = [baseName || ''].filter(Boolean).join(' - ');
-    return {
-      ...u,
-      fullName: label,
-    };
+    const baseName = (u.name && u.name.trim()) || (u.fullName && u.fullName.trim()) || (u.email && u.email.trim()) || '';
+    return { ...u, fullName: [baseName || ''].filter(Boolean).join(' - ') };
   }) as any[];
 
-  return (
-    <SimplePicker
-      items={items}
-      value={props.value ?? undefined}
-      onChange={props.onChange}
-      disabled={props.disabled}
-      placeholder={props.placeholder ?? '— Seleccionar conductor —'}
-      subtitleOf={(u: any) => u.email || null}
-    />
-  );
+  return <SimplePicker items={items} value={props.value ?? undefined} onChange={props.onChange} disabled={props.disabled} placeholder={props.placeholder ?? '— Seleccionar conductor —'} subtitleOf={(u: any) => u.email || null} />;
 };
 
 type PageSizeOption = 10 | 50 | 100 | 'ALL';
@@ -269,56 +211,25 @@ export default function HandoverPage() {
   const [pageSize, setPageSize] = useState<PageSizeOption>(10);
   const [page, setPage] = useState(1);
   const [showOnlySelected, setShowOnlySelected] = useState(false);
-  
-  // ✅ CORRECCIÓN: Usamos un fileKey para obligar a React a limpiar el input correctamente
   const [attachment, setAttachment] = useState<File | null>(null);
   const [fileKey, setFileKey] = useState(Date.now());
 
-  const peopleQ = useQuery({
-    queryKey: ['catalog-persons-for-picker'],
-    queryFn: async () => {
-      const { data } = await api.get<{ items: Person[] }>('/api/catalog/persons', {
-        params: { pageSize: 5000 },
-      });
-      return data.items ?? [];
-    },
-  });
-
-  const driversQ = useQuery({
-    queryKey: ['drivers'],
-    queryFn: async () => {
-      const { data } = await api.get<{ items: AppUser[] }>('/api/users/drivers');
-      return data.items ?? [];
-    },
-  });
+  const peopleQ = useQuery({ queryKey: ['catalog-persons-for-picker'], queryFn: async () => (await api.get<{ items: Person[] }>('/api/catalog/persons', { params: { pageSize: 5000 } })).data.items ?? [] });
+  const driversQ = useQuery({ queryKey: ['drivers'], queryFn: async () => (await api.get<{ items: AppUser[] }>('/api/users/drivers')).data.items ?? [] });
 
   const visiblePeople = useMemo(() => {
     const arr = peopleQ.data ?? [];
     if (form.type !== 'ENTREGA') return arr;
-    return arr.filter((p) => {
-      const inactiveByDate = !!p.inactivityDate;
-      const inactiveByText = (p.finalStatus || '').toLowerCase().includes('inactiv');
-      return !inactiveByDate && !inactiveByText;
-    });
+    return arr.filter((p) => !p.inactivityDate && !(p.finalStatus || '').toLowerCase().includes('inactiv'));
   }, [peopleQ.data, form.type]);
 
-  const allAssets = useQuery({
-    queryKey: ['assets-mini'],
-    queryFn: async () =>
-      (await api.get<{ items: Asset[] }>('/api/assets', { params: { pageSize: 10000 } })).data.items ?? [],
-  });
+  const allAssets = useQuery({ queryKey: ['assets-mini'], queryFn: async () => (await api.get<{ items: Asset[] }>('/api/assets', { params: { pageSize: 10000 } })).data.items ?? [] });
 
   const hasCustodian = (a: Asset) => Boolean(a.currentCustodianId) || Boolean(a.currentCustodian?.id);
   const custodianIdOf = (a: Asset) => a.currentCustodianId ?? a.currentCustodian?.id ?? null;
-  const isInStock = (a: Asset) => {
-    const s = (a.status || '').toUpperCase();
-    return s === 'IN_STOCK' || !hasCustodian(a);
-  };
+  const isInStock = (a: Asset) => (a.status || '').toUpperCase() === 'IN_STOCK' || !hasCustodian(a);
 
-  const reasonOptions = useMemo(
-    () => (form.type === 'ENTREGA' ? [...DELIVERY_REASONS] : [...PICKUP_REASONS]),
-    [form.type]
-  );
+  const reasonOptions = useMemo(() => (form.type === 'ENTREGA' ? [...DELIVERY_REASONS] : [...PICKUP_REASONS]), [form.type]);
 
   const baseVisibleAssets = useMemo(() => {
     const arr = allAssets.data ?? [];
@@ -329,15 +240,12 @@ export default function HandoverPage() {
 
   const visibleAssets = useMemo(() => {
     let source = baseVisibleAssets;
-
     if (showOnlySelected && form.assetIds.length > 0) {
       const idsSet = new Set(form.assetIds);
       source = source.filter((a) => idsSet.has(a.id));
     }
-
     const q = assetQ.trim().toLowerCase();
     if (!q) return source;
-
     return source.filter((a) => {
       const name = (a.name || '').toLowerCase();
       const tag = (a.tag || '').toLowerCase();
@@ -346,37 +254,17 @@ export default function HandoverPage() {
     });
   }, [baseVisibleAssets, assetQ, showOnlySelected, form.assetIds]);
 
-  useEffect(() => {
-    setForm((f) => ({ ...f, assetIds: [], reason: '' }));
-  }, [form.type, form.personId]);
-
-  useEffect(() => {
-    setShowOnlySelected(false);
-  }, [form.type, form.personId]);
-
+  useEffect(() => { setForm((f) => ({ ...f, assetIds: [], reason: '' })); }, [form.type, form.personId]);
+  useEffect(() => { setShowOnlySelected(false); }, [form.type, form.personId]);
   useEffect(() => {
     if (form.homeDelivery) {
-      setForm((f) => ({
-        ...f,
-        signerName: '',
-        signerId: '',
-        relation: 'PACIENTE',
-        email: '',
-        phone: '',
-        notes: '',
-        signatureData: null,
-      }));
+      setForm((f) => ({ ...f, signerName: '', signerId: '', relation: 'PACIENTE', email: '', phone: '', notes: '', signatureData: null }));
     }
   }, [form.homeDelivery]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [assetQ, form.type, form.personId, pageSize, showOnlySelected]);
+  useEffect(() => { setPage(1); }, [assetQ, form.type, form.personId, pageSize, showOnlySelected]);
 
   const totalItems = visibleAssets.length;
-  const totalPages =
-    pageSize === 'ALL' ? 1 : Math.max(1, Math.ceil(totalItems / pageSize));
-
+  const totalPages = pageSize === 'ALL' ? 1 : Math.max(1, Math.ceil(totalItems / pageSize));
   const paginatedAssets = useMemo(() => {
     if (pageSize === 'ALL') return visibleAssets;
     const start = (page - 1) * pageSize;
@@ -384,10 +272,7 @@ export default function HandoverPage() {
   }, [visibleAssets, page, pageSize]);
 
   const toggleAsset = (id: string) => {
-    setForm((f) => ({
-      ...f,
-      assetIds: f.assetIds.includes(id) ? f.assetIds.filter((x) => x !== id) : [...f.assetIds, id],
-    }));
+    setForm((f) => ({ ...f, assetIds: f.assetIds.includes(id) ? f.assetIds.filter((x) => x !== id) : [...f.assetIds, id] }));
   };
 
   function buildPayload(f: FormState) {
@@ -403,103 +288,71 @@ export default function HandoverPage() {
       reason: (f.reason || '').trim() || null,
       homeDelivery: !!f.homeDelivery,
       driverId: f.homeDelivery ? f.driverId || null : null,
-      scheduledDate:
-        f.type === 'ENTREGA' && f.homeDelivery && f.scheduledDate
-          ? f.scheduledDate
-          : null,
+      scheduledDate: f.type === 'ENTREGA' && f.homeDelivery && f.scheduledDate ? f.scheduledDate : null,
       items: (f.assetIds || []).map((assetId) => ({ assetId, quantity: 1 })),
     };
     return f.type === 'ENTREGA' ? { ...base, personId: f.personId } : base;
   }
 
+  // ✅ CORRECCIÓN DEFINITIVA: Inyectamos explícitamente el archivo para evitar "Estado estancado" de React
   const create = useMutation({
-    mutationFn: async () => {
-      if (!form.assetIds.length) throw new Error('Selecciona al menos un equipo');
+    mutationFn: async (vars: { formState: FormState; fileToUpload: File | null }) => {
+      const { formState, fileToUpload } = vars;
 
-      const allowedValues = (form.type === 'ENTREGA' ? DELIVERY_REASONS : PICKUP_REASONS) as readonly string[];
-      if (!form.reason || !allowedValues.includes(form.reason)) {
-        throw new Error(
-          `Selecciona un motivo válido para ${form.type === 'ENTREGA' ? 'ENTREGA' : 'RECOGIDA'}`
-        );
+      if (!formState.assetIds.length) throw new Error('Selecciona al menos un equipo');
+      const allowedValues = (formState.type === 'ENTREGA' ? DELIVERY_REASONS : PICKUP_REASONS) as readonly string[];
+      if (!formState.reason || !allowedValues.includes(formState.reason)) {
+        throw new Error(`Selecciona un motivo válido para ${formState.type === 'ENTREGA' ? 'ENTREGA' : 'RECOGIDA'}`);
+      }
+      if (formState.type === 'ENTREGA' && !formState.personId) throw new Error('Selecciona el usuario (custodio) para la entrega');
+      if (formState.type === 'RECOGIDA' && formState.personId && baseVisibleAssets.length === 0) throw new Error('Ese usuario no tiene equipos asignados.');
+      if (formState.homeDelivery && !formState.driverId) throw new Error('Selecciona el conductor para la ruta a domicilio');
+      if (formState.type === 'ENTREGA' && formState.homeDelivery && !formState.scheduledDate) throw new Error('Selecciona la fecha programada de la ruta a domicilio');
+
+      if (!formState.homeDelivery) {
+        if (!formState.signerName.trim()) throw new Error('Falta el nombre de quien firma');
+        if (!formState.signerId.trim()) throw new Error('Falta la identificación de quien firma');
+        if (!formState.relation) throw new Error('Selecciona el parentesco/relación');
+        if (!formState.email.trim()) throw new Error('Falta el correo electrónico de quien firma');
+        if (!formState.phone.trim()) throw new Error('Falta el teléfono de quien firma');
+        if (!formState.signatureData) throw new Error('La firma en pantalla es obligatoria');
       }
 
-      if (form.type === 'ENTREGA' && !form.personId) {
-        throw new Error('Selecciona el usuario (custodio) para la entrega');
-      }
-      if (form.type === 'RECOGIDA' && form.personId && baseVisibleAssets.length === 0) {
-        throw new Error('Ese usuario no tiene equipos asignados.');
-      }
-
-      if (form.homeDelivery && !form.driverId) {
-        throw new Error('Selecciona el conductor para la ruta a domicilio');
-      }
-
-      if (form.type === 'ENTREGA' && form.homeDelivery && !form.scheduledDate) {
-        throw new Error('Selecciona la fecha programada de la ruta a domicilio');
-      }
-
-      if (!form.homeDelivery) {
-        if (!form.signerName.trim()) throw new Error('Falta el nombre de quien firma');
-        if (!form.signerId.trim()) throw new Error('Falta la identificación de quien firma');
-        if (!form.relation) throw new Error('Selecciona el parentesco/relación');
-        if (!form.email.trim()) throw new Error('Falta el correo electrónico de quien firma');
-        if (!form.phone.trim()) throw new Error('Falta el teléfono de quien firma');
-        if (!form.signatureData) throw new Error('La firma en pantalla es obligatoria');
-      }
-
-      const payload = buildPayload(form);
+      const payload = buildPayload(formState);
       const formData = new FormData();
       
       Object.entries(payload).forEach(([key, value]) => {
         if (value !== null && value !== undefined) {
-          if (typeof value === 'object') {
-            formData.append(key, JSON.stringify(value));
-          } else {
-            formData.append(key, String(value));
-          }
+          if (typeof value === 'object') formData.append(key, JSON.stringify(value));
+          else formData.append(key, String(value));
         }
       });
 
-      // ✅ Enviamos el archivo 100% seguro
-      if (attachment) {
-        formData.append('attachment', attachment);
+      // ¡AQUÍ ESTÁ LA MAGIA! Nos aseguramos de enviar el archivo exacto.
+      if (fileToUpload) {
+        formData.append('attachment', fileToUpload);
       }
 
       const { data } = await api.post('/api/handover', formData);
       return data;
     },
+    onSuccess: (resp, vars) => {
+      toast.success(vars.formState.type === 'ENTREGA' ? 'Entrega registrada' : 'Recogida registrada');
 
-    onSuccess: (resp) => {
-      toast.success(form.type === 'ENTREGA' ? 'Entrega registrada' : 'Recogida registrada');
-
-      if (form.homeDelivery) {
+      if (vars.formState.homeDelivery) {
         const routeCode = resp?.routeCode ?? resp?.route?.code ?? null;
-        const label = routeCode ? `Ruta creada: ${routeCode}` : 'También se creó una ruta programada.';
-        toast.info(label, {
+        toast.info(routeCode ? `Ruta creada: ${routeCode}` : 'También se creó una ruta programada.', {
           action: { label: 'Ver rutas', onClick: () => router.push('/routes') },
           duration: 6000,
         });
       }
 
       setForm({
-        type: 'ENTREGA',
-        personId: '',
-        signerName: '',
-        signerId: '',
-        relation: 'PACIENTE',
-        email: '',
-        phone: '',
-        notes: '',
-        signatureData: null,
-        assetIds: [],
-        reason: '',
-        homeDelivery: false,
-        driverId: null,
-        scheduledDate: '',
+        type: 'ENTREGA', personId: '', signerName: '', signerId: '', relation: 'PACIENTE',
+        email: '', phone: '', notes: '', signatureData: null, assetIds: [], reason: '',
+        homeDelivery: false, driverId: null, scheduledDate: '',
       });
       setShowOnlySelected(false);
-      
-      // ✅ Limpiamos el archivo visualmente y en el estado
       setAttachment(null);
       setFileKey(Date.now()); 
 
@@ -507,15 +360,14 @@ export default function HandoverPage() {
       qc.invalidateQueries({ queryKey: ['routes'] });
     },
     onError: (e: any) => {
-      const server = e?.response?.data;
-      toast.error(server?.error || server?.details?.message || 'No se pudo registrar.');
-      console.log('POST /api/handover error:', server || e);
+      toast.error(e?.response?.data?.error || e?.response?.data?.details?.message || 'No se pudo registrar.');
     },
   });
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await create.mutateAsync();
+    // ✅ Le pasamos explicitamente la versión más reciente del formulario y del archivo a la función
+    await create.mutateAsync({ formState: form, fileToUpload: attachment });
   };
 
   return (
@@ -531,11 +383,7 @@ export default function HandoverPage() {
             {/* Tipo */}
             <div className="grid gap-1.5">
               <label className="text-sm">Tipo</label>
-              <select
-                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-                value={form.type}
-                onChange={(e) => setForm({ ...form, type: e.target.value as HandoverType })}
-              >
+              <select className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as HandoverType })}>
                 <option value="ENTREGA">Entrega</option>
                 <option value="RECOGIDA">Recogida</option>
               </select>
@@ -544,353 +392,125 @@ export default function HandoverPage() {
             {/* Usuario (custodio) */}
             <div className="grid gap-1.5">
               <label className="text-sm">Usuario (custodio)</label>
-              <UserPicker
-                people={visiblePeople}
-                value={form.personId}
-                onChange={(id: string) => setForm({ ...form, personId: id })}
-                disabled={peopleQ.isLoading}
-                placeholder={peopleQ.isLoading ? 'Cargando…' : '— Seleccionar —'}
-              />
-              {form.type === 'ENTREGA' && (
-                <p className="text-xs text-slate-500">
-                  * En entregas, los usuarios inactivos no se muestran.
-                </p>
-              )}
+              <UserPicker people={visiblePeople} value={form.personId} onChange={(id: string) => setForm({ ...form, personId: id })} disabled={peopleQ.isLoading} placeholder={peopleQ.isLoading ? 'Cargando…' : '— Seleccionar —'} />
             </div>
 
             {/* Motivo */}
             <div className="grid gap-1.5">
               <label className="text-sm">Motivo</label>
-              <select
-                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-                value={form.reason}
-                onChange={(e) => setForm({ ...form, reason: e.target.value })}
-              >
+              <select className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })}>
                 <option value="">— Seleccionar —</option>
-                {reasonOptions.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
+                {reasonOptions.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
-              <p className="text-xs text-slate-500">El motivo cambia según el tipo seleccionado.</p>
             </div>
 
             {/* A domicilio */}
             <div className="flex items-center gap-2">
-              <input
-                id="homeDelivery"
-                type="checkbox"
-                className="h-4 w-4"
-                checked={form.homeDelivery}
-                onChange={(e) => setForm({ ...form, homeDelivery: e.target.checked })}
-              />
-              <label htmlFor="homeDelivery" className="text-sm select-none">
-                Crear ruta a domicilio
-              </label>
+              <input id="homeDelivery" type="checkbox" className="h-4 w-4" checked={form.homeDelivery} onChange={(e) => setForm({ ...form, homeDelivery: e.target.checked })} />
+              <label htmlFor="homeDelivery" className="text-sm select-none">Crear ruta a domicilio</label>
             </div>
 
-            {/* Conductor (solo si domicilio) */}
             {form.homeDelivery && (
               <div className="grid gap-1.5">
                 <label className="text-sm">Conductor</label>
-                <DriverPicker
-                  drivers={driversQ.data ?? []}
-                  value={form.driverId ?? null}
-                  onChange={(id: string) => setForm({ ...form, driverId: id })}
-                  disabled={driversQ.isLoading}
-                  placeholder={driversQ.isLoading ? 'Cargando…' : '— Seleccionar conductor —'}
-                />
-                <p className="text-xs text-slate-500">
-                  Selecciona un usuario administrativo con rol de conductor.
-                </p>
+                <DriverPicker drivers={driversQ.data ?? []} value={form.driverId ?? null} onChange={(id: string) => setForm({ ...form, driverId: id })} disabled={driversQ.isLoading} placeholder={driversQ.isLoading ? 'Cargando…' : '— Seleccionar conductor —'} />
               </div>
             )}
 
-            {/* Fecha programada (solo Entrega a domicilio) */}
             {form.type === 'ENTREGA' && form.homeDelivery && (
               <div className="grid gap-1.5">
                 <label className="text-sm">Fecha programada</label>
-                <input
-                  type="date"
-                  className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-                  value={form.scheduledDate}
-                  onChange={(e) => setForm({ ...form, scheduledDate: e.target.value })}
-                />
-                <p className="text-xs text-slate-500">
-                  Día en el que se realizará la ruta domiciliaria.
-                </p>
+                <input type="date" className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950" value={form.scheduledDate} onChange={(e) => setForm({ ...form, scheduledDate: e.target.value })} />
               </div>
             )}
 
-            {/* Bloque de firma/contacto (oculto si domicilio) */}
             {!form.homeDelivery && (
               <>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="grid gap-1.5">
                     <label className="text-sm">Quién firma</label>
-                    <input
-                      className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-                      value={form.signerName}
-                      onChange={(e) => setForm({ ...form, signerName: e.target.value })}
-                    />
+                    <input className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950" value={form.signerName} onChange={(e) => setForm({ ...form, signerName: e.target.value })} />
                   </div>
                   <div className="grid gap-1.5">
                     <label className="text-sm">Identificación</label>
-                    <input
-                      className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-                      value={form.signerId}
-                      onChange={(e) => setForm({ ...form, signerId: e.target.value })}
-                    />
+                    <input className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950" value={form.signerId} onChange={(e) => setForm({ ...form, signerId: e.target.value })} />
                   </div>
                 </div>
 
                 <div className="grid gap-1.5">
                   <label className="text-sm">Parentesco</label>
-                  <select
-                    className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-                    value={form.relation}
-                    onChange={(e) =>
-                      setForm({ ...form, relation: e.target.value as Relation })
-                    }
-                  >
-                    <option value="HIJA">HIJA</option>
-                    <option value="HIJO">HIJO</option>
-                    <option value="MADRE">MADRE</option>
-                    <option value="PADRE">PADRE</option>
-                    <option value="SOBRINA">SOBRINA</option>
-                    <option value="SOBRINO">SOBRINO</option>
-                    <option value="HIJASTRO">HIJASTRO</option>
-                    <option value="HIJASTRA">HIJASTRA</option>
-                    <option value="HERMANO">HERMANO</option>
-                    <option value="HERMANA">HERMANA</option>
-                    <option value="TIA">TIA</option>
-                    <option value="TIO">TIO</option>
-                    <option value="COLABORADOR">COLABORADOR</option>
-                    <option value="YERNO">YERNO</option>
-                    <option value="NIETO">NIETO</option>
-                    <option value="NIETA">NIETA</option>
-                    <option value="CUÑADO">CUÑADO</option>
-                    <option value="NUERA">NUERA</option>
-                    <option value="PRIMA">PRIMA</option>
-                    <option value="PRIMO">PRIMO</option>
-                    <option value="ABUELA">ABUELA</option>
-                    <option value="PACIENTE">PACIENTE</option>
-                    <option value="ESPOSO">ESPOSO</option>
-                    <option value="ESPOSA">ESPOSA</option>
-                    <option value="TUTORA">TUTORA</option>
-                    <option value="TUTOR">TUTOR</option>
-                    <option value="CUIDADOR">CUIDADOR</option>
-                    <option value="FAMILIAR">FAMILIAR</option>
+                  <select className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950" value={form.relation} onChange={(e) => setForm({ ...form, relation: e.target.value as Relation })}>
+                    <option value="HIJA">HIJA</option><option value="HIJO">HIJO</option><option value="MADRE">MADRE</option><option value="PADRE">PADRE</option>
+                    <option value="SOBRINA">SOBRINA</option><option value="SOBRINO">SOBRINO</option><option value="HIJASTRO">HIJASTRO</option><option value="HIJASTRA">HIJASTRA</option>
+                    <option value="HERMANO">HERMANO</option><option value="HERMANA">HERMANA</option><option value="TIA">TIA</option><option value="TIO">TIO</option>
+                    <option value="COLABORADOR">COLABORADOR</option><option value="YERNO">YERNO</option><option value="NIETO">NIETO</option><option value="NIETA">NIETA</option>
+                    <option value="CUÑADO">CUÑADO</option><option value="NUERA">NUERA</option><option value="PRIMA">PRIMA</option><option value="PRIMO">PRIMO</option>
+                    <option value="ABUELA">ABUELA</option><option value="PACIENTE">PACIENTE</option><option value="ESPOSO">ESPOSO</option><option value="ESPOSA">ESPOSA</option>
+                    <option value="TUTORA">TUTORA</option><option value="TUTOR">TUTOR</option><option value="CUIDADOR">CUIDADOR</option><option value="FAMILIAR">FAMILIAR</option>
                   </select>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="grid gap-1.5">
                     <label className="text-sm">Correo</label>
-                    <input
-                      type="email"
-                      className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-                      value={form.email}
-                      onChange={(e) => setForm({ ...form, email: e.target.value })}
-                    />
+                    <input type="email" className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
                   </div>
                   <div className="grid gap-1.5">
                     <label className="text-sm">Teléfono</label>
-                    <input
-                      className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-                      value={form.phone}
-                      onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                    />
+                    <input className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
                   </div>
                 </div>
 
                 <div className="grid gap-1.5">
                   <label className="text-sm">Observación</label>
-                  <textarea
-                    className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-                    value={form.notes}
-                    onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                    rows={3}
-                  />
+                  <textarea className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={3} />
                 </div>
 
                 <div className="grid gap-1.5">
                   <label className="text-sm">Soporte Manual (Opcional)</label>
-                  <input
-                    key={fileKey} // ✅ La magia de React, evita bugs con los archivos
-                    type="file"
-                    onChange={(e) => setAttachment(e.target.files?.[0] || null)}
-                    className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold hover:file:bg-slate-200 dark:file:bg-slate-800 dark:hover:file:bg-slate-700 cursor-pointer"
-                    accept=".pdf,image/*"
-                  />
-                  <p className="text-xs text-slate-500">
-                    Sube un PDF o foto si tienes el documento en físico.
-                  </p>
+                  <input key={fileKey} type="file" onChange={(e) => setAttachment(e.target.files?.[0] || null)} className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold hover:file:bg-slate-200 dark:file:bg-slate-800 dark:hover:file:bg-slate-700 cursor-pointer" accept=".pdf,image/*" />
                 </div>
 
                 <div className="grid gap-1.5">
                   <label className="text-sm">Firma</label>
-                  <SignaturePad
-                    value={form.signatureData}
-                    onChange={(v) => setForm({ ...form, signatureData: v })}
-                  />
+                  <SignaturePad value={form.signatureData} onChange={(v) => setForm({ ...form, signatureData: v })} />
                 </div>
               </>
-            )}
-
-            {form.homeDelivery && (
-              <p className="text-xs text-slate-500">
-                Esta entrega/recogida será gestionada por ruta a domicilio. Los datos de firma y
-                contacto se capturarán durante la visita.
-              </p>
             )}
           </div>
 
           {/* Columna derecha: equipos */}
           <div className="border rounded-xl bg-white dark:bg-slate-900 p-4 space-y-3">
-            <h2 className="font-medium">
-              Equipos a {form.type === 'ENTREGA' ? 'entregar' : 'recoger'}
-            </h2>
-
-            <div className="text-xs text-slate-500">
-              {form.type === 'ENTREGA'
-                ? 'Se muestran equipos disponibles (en stock o sin custodio).'
-                : form.personId
-                ? 'Se muestran equipos asignados a ese usuario.'
-                : 'Selecciona un usuario para ver sus equipos asignados.'}
-            </div>
-
+            <h2 className="font-medium">Equipos a {form.type === 'ENTREGA' ? 'entregar' : 'recoger'}</h2>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2 flex-1">
-                <input
-                  value={assetQ}
-                  onChange={(e) => setAssetQ(e.target.value)}
-                  placeholder="Buscar equipo por nombre, tag o categoría…"
-                  className="w-full rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-                />
-                {assetQ && (
-                  <button
-                    type="button"
-                    onClick={() => setAssetQ('')}
-                    className="text-xs px-2 py-1 rounded-lg border hover:bg-slate-50 dark:hover:bg-slate-800"
-                  >
-                    Limpiar
-                  </button>
-                )}
+                <input value={assetQ} onChange={(e) => setAssetQ(e.target.value)} placeholder="Buscar equipo..." className="w-full rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950" />
               </div>
-
               <div className="flex items-center gap-3 text-xs text-slate-500">
-                <label className="flex items-center gap-1">
-                  <input
-                    type="checkbox"
-                    className="h-3 w-3"
-                    checked={showOnlySelected}
-                    onChange={(e) => setShowOnlySelected(e.target.checked)}
-                    disabled={form.assetIds.length === 0}
-                  />
-                  <span>Solo seleccionados</span>
-                </label>
-                <span>Mostrar:</span>
-                <select
-                  className="rounded-lg border px-2 py-1 text-xs bg-white dark:bg-slate-950"
-                  value={pageSize === 'ALL' ? 'ALL' : String(pageSize)}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setPageSize(
-                      v === 'ALL'
-                        ? 'ALL'
-                        : (parseInt(v, 10) as PageSizeOption)
-                    );
-                  }}
-                >
-                  <option value="10">10</option>
-                  <option value="50">50</option>
-                  <option value="100">100</option>
-                  <option value="ALL">Todos</option>
-                </select>
+                <label className="flex items-center gap-1"><input type="checkbox" className="h-3 w-3" checked={showOnlySelected} onChange={(e) => setShowOnlySelected(e.target.checked)} disabled={form.assetIds.length === 0} /><span>Solo seleccionados</span></label>
               </div>
-            </div>
-
-            <div className="flex items-center justify-between text-xs text-slate-500">
-              <div>
-                {totalItems === 0
-                  ? 'Sin equipos para mostrar.'
-                  : pageSize === 'ALL'
-                  ? `Mostrando ${totalItems} equipos`
-                  : `Mostrando ${
-                      totalItems === 0
-                        ? 0
-                        : Math.min(totalItems, page * (pageSize as number))
-                    } de ${totalItems} equipos`}
-              </div>
-              {totalItems > 0 && pageSize !== 'ALL' && (
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="px-2 py-1 rounded-lg border disabled:opacity-40"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page <= 1}
-                  >
-                    Anterior
-                  </button>
-                  <span>
-                    Página {page} de {totalPages}
-                  </span>
-                  <button
-                    type="button"
-                    className="px-2 py-1 rounded-lg border disabled:opacity-40"
-                    onClick={() =>
-                      setPage((p) => Math.min(totalPages, p + 1))
-                    }
-                    disabled={page >= totalPages}
-                  >
-                    Siguiente
-                  </button>
-                </div>
-              )}
             </div>
 
             <div className="max-h-[55vh] overflow-y-auto border rounded-xl">
               <ul className="divide-y">
                 {paginatedAssets.map((a) => {
                   const checked = form.assetIds.includes(a.id);
-                  const computedStatus =
-                    (a.status || '').toUpperCase() ||
-                    (hasCustodian(a) ? 'ASSIGNED' : 'IN_STOCK');
+                  const computedStatus = (a.status || '').toUpperCase() || (hasCustodian(a) ? 'ASSIGNED' : 'IN_STOCK');
                   return (
                     <li key={a.id} className="p-3 flex items-center justify-between">
                       <div>
-                        <div className="font-medium text-sm">
-                          {a.tag} — {a.name}
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {computedStatus}
-                          {a.category?.name ? ` • ${a.category.name}` : ''}
-                        </div>
+                        <div className="font-medium text-sm">{a.tag} — {a.name}</div>
+                        <div className="text-xs text-slate-500">{computedStatus}</div>
                       </div>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleAsset(a.id)}
-                        className="h-4 w-4"
-                      />
+                      <input type="checkbox" checked={checked} onChange={() => toggleAsset(a.id)} className="h-4 w-4" />
                     </li>
                   );
                 })}
-                {paginatedAssets.length === 0 && (
-                  <li className="p-6 text-sm text-slate-500 text-center">Sin equipos.</li>
-                )}
               </ul>
             </div>
 
             <div className="flex justify-end">
-              <button
-                type="submit"
-                onClick={submit}
-                className="rounded-xl bg-emerald-600 text-white px-4 py-2 text-sm hover:bg-emerald-700 disabled:opacity-60"
-                disabled={create.isPending}
-              >
+              <button type="submit" onClick={submit} className="rounded-xl bg-emerald-600 text-white px-4 py-2 text-sm hover:bg-emerald-700 disabled:opacity-60" disabled={create.isPending}>
                 {create.isPending ? 'Guardando…' : 'Registrar'}
               </button>
             </div>
