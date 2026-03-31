@@ -17,8 +17,8 @@ const baseURL = rawBase.replace(/\/+$/, '');
 
 export const api = axios.create({
   baseURL,
-  headers: { 'Content-Type': 'application/json' },
-  // Si en algún momento usas cookies:
+  // ✅ CORRECCIÓN: Eliminamos el Content-Type forzado. 
+  // Axios ahora decidirá inteligentemente usar JSON para datos normales y Multipart para archivos.
   withCredentials: true,
 });
 
@@ -170,7 +170,7 @@ export async function authLogout() {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   INTERFACES DE DATOS (Agregadas para resolver errores)
+   INTERFACES DE DATOS
 ────────────────────────────────────────────────────────────── */
 export interface Asset {
   id: string;
