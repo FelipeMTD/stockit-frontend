@@ -29,7 +29,6 @@ type AssetDetail = {
   acquisitionType?: string | null;
   riskLevel?: string | null;
 
-  // ✅ NUEVO
   maintenanceFrequency?: MaintenanceFrequency | null;
 
   status: 'IN_STOCK' | 'ASSIGNED' | 'IN_REPAIR' | 'LOST' | 'DISPOSED';
@@ -37,11 +36,8 @@ type AssetDetail = {
   photoUrl?: string | null;
   notes?: string | null;
 
-  // Para el form
   site?: { id: string; name: string } | null;
   currentLocation?: { id: string; name: string } | null;
-
-  // Bodega asignada
   assignedWarehouse?: { id: string; name: string } | null;
 };
 
@@ -61,7 +57,6 @@ type AssetUpdatePayload = {
   acquisitionType?: string | null;
   riskLevel?: string | null;
 
-  // ✅ NUEVO
   maintenanceFrequency?: MaintenanceFrequency | null;
 
   status?: 'IN_STOCK' | 'ASSIGNED' | 'IN_REPAIR' | 'LOST' | 'DISPOSED';
@@ -71,7 +66,6 @@ type AssetUpdatePayload = {
 
   siteId?: string | null;
   currentLocationId?: string | null;
-
   assignedWarehouseId?: string | null;
 };
 
@@ -99,7 +93,6 @@ const TIPOS_ADQUISICION = [
 
 const NIVELES_RIESGO = ['I', 'IIA', 'IIB', 'III', 'NO APLICA'] as const;
 
-// ✅ NUEVO: Frecuencia mantenimiento
 const FRECUENCIAS_MANTENIMIENTO: Array<{ value: MaintenanceFrequency; label: string }> = [
   { value: 'ANUAL', label: 'Anual' },
   { value: 'SEMESTRAL', label: 'Semestral' },
@@ -153,8 +146,8 @@ export default function EditAssetPage() {
 
   const { data: asset, isLoading } = useAsset(id);
   const cats = useCategories();
-  const locs = useLocations(); // Ubicaciones (incluye bodegas)
-  const sites = useSites(); // Sedes
+  const locs = useLocations(); 
+  const sites = useSites(); 
 
   const upd = useUpdateAsset(String(id));
 
@@ -174,15 +167,11 @@ export default function EditAssetPage() {
     warrantyUntil: '',
     acquisitionType: '',
     riskLevel: '',
-
-    // ✅ NUEVO
     maintenanceFrequency: 'NO_APLICA',
-
     status: 'IN_STOCK',
     lifeState: 'ACTIVE',
     photoUrl: '',
     notes: '',
-
     siteId: '',
     currentLocationId: '',
     assignedWarehouseId: '',
@@ -211,15 +200,11 @@ export default function EditAssetPage() {
       warrantyUntil: toYYYYMMDD(asset.warrantyUntil),
       acquisitionType: asset.acquisitionType || '',
       riskLevel: asset.riskLevel || '',
-
-      // ✅ NUEVO
       maintenanceFrequency: mf || 'NO_APLICA',
-
       status: asset.status || 'IN_STOCK',
       lifeState: asset.lifeState || 'ACTIVE',
       photoUrl: asset.photoUrl || '',
       notes: asset.notes || '',
-
       siteId: asset.site?.id || '',
       currentLocationId: asset.currentLocation?.id || '',
       assignedWarehouseId: asset.assignedWarehouse?.id || '',
@@ -233,13 +218,16 @@ export default function EditAssetPage() {
     return url.startsWith('http') ? url : '';
   }, [form.photoUrl]);
 
-  // Normalizamos locations desde el hook (puede venir como {items} o array)
   const locItemsRaw = (locs.data as any)?.items ?? locs.data ?? [];
   const allLocations: any[] = Array.isArray(locItemsRaw) ? locItemsRaw : [];
 
   const selectedSiteId = form.siteId || '';
 
-  // BODEGAS filtradas por sede
+  // 👇 LÓGICA CLAVE AÑADIDA PARA ESTA VISTA
+  const selectedCategoryId = form.categoryId || '';
+  const selectedCategory = (cats.data as any[])?.find((c: any) => c.id === selectedCategoryId);
+  const availableNames = selectedCategory?.allowedNames || [];
+
   const warehouses = useMemo(() => {
     if (!allLocations.length) return [];
     const hasType = allLocations.some((l) => typeof l?.type === 'string');
@@ -256,7 +244,6 @@ export default function EditAssetPage() {
     return list;
   }, [allLocations, selectedSiteId]);
 
-  // UBICACIONES filtradas por sede (no solo bodegas)
   const locationOptions = useMemo(() => {
     if (!allLocations.length) return [];
     if (!selectedSiteId) return allLocations;
@@ -272,7 +259,6 @@ export default function EditAssetPage() {
     if (!form.name.trim()) return toast.error('El nombre es obligatorio');
     if (!form.tag.trim()) return toast.error('El código (tag) es obligatorio');
 
-    // Si está IN_STOCK y no hay ubicación, autocompleta con la bodega asignada
     const shouldDefaultToWarehouse =
       form.status === 'IN_STOCK' &&
       (!form.currentLocationId || form.currentLocationId === '') &&
@@ -294,20 +280,15 @@ export default function EditAssetPage() {
       warrantyUntil: form.warrantyUntil || null,
       acquisitionType: form.acquisitionType || null,
       riskLevel: form.riskLevel || null,
-
-      // ✅ NUEVO
       maintenanceFrequency: (form.maintenanceFrequency || null) as MaintenanceFrequency | null,
-
       status: form.status,
       lifeState: form.lifeState || null,
       photoUrl: form.photoUrl || null,
       notes: form.notes || null,
-
       siteId: form.siteId || null,
       currentLocationId: shouldDefaultToWarehouse
         ? form.assignedWarehouseId
         : form.currentLocationId || null,
-
       assignedWarehouseId: form.assignedWarehouseId || null,
     };
 
@@ -331,7 +312,6 @@ export default function EditAssetPage() {
         onSubmit={onSubmit}
         className="space-y-4 border rounded-2xl bg-white dark:bg-slate-900 p-4"
       >
-        {/* Identificación */}
         <div className="grid sm:grid-cols-2 gap-3">
           <div className="grid gap-1.5">
             <label className="text-sm">
@@ -345,16 +325,46 @@ export default function EditAssetPage() {
             />
           </div>
 
+          {/* 👇 CAMBIO: Selector de Categoría AHORA ESTÁ AQUÍ */}
+          <div className="grid gap-1.5">
+            <label className="text-sm">Categoría</label>
+            <select
+              value={form.categoryId}
+              onChange={(e) => {
+                set('categoryId', e.target.value);
+                set('name', ''); // Limpiamos nombre cuando cambia la categoría
+              }}
+              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+            >
+              <option value="">—</option>
+              {cats.data?.map((c: any) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* 👇 CAMBIO: Nombre del activo (Dependiente) */}
           <div className="grid gap-1.5">
             <label className="text-sm">
-              Nombre <span className="text-rose-500">*</span>
+              Nombre del activo <span className="text-rose-500">*</span>
             </label>
-            <input
+            <select
               value={form.name}
               onChange={(e) => set('name', e.target.value)}
-              placeholder="Portátil Dell"
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            />
+              disabled={!form.categoryId}
+              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="">
+                {!form.categoryId ? '← Elija categoría primero' : 'Seleccione nombre...'}
+              </option>
+              {availableNames.map((n: any) => (
+                <option key={n.id} value={n.name}>
+                  {n.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="grid gap-1.5">
@@ -365,22 +375,6 @@ export default function EditAssetPage() {
               placeholder="SN-ABC-123"
               className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
             />
-          </div>
-
-          <div className="grid gap-1.5">
-            <label className="text-sm">Categoría</label>
-            <select
-              value={form.categoryId}
-              onChange={(e) => set('categoryId', e.target.value)}
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            >
-              <option value="">—</option>
-              {cats.data?.map((c: any) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
           </div>
         </div>
 
@@ -564,7 +558,6 @@ export default function EditAssetPage() {
             </select>
           </div>
 
-          {/* ✅ NUEVO */}
           <div className="grid gap-1.5">
             <label className="text-sm">Frecuencia mantenimiento</label>
             <select

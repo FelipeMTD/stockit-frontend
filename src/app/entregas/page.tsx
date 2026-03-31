@@ -275,6 +275,7 @@ export default function HandoverPage() {
   const [pageSize, setPageSize] = useState<PageSizeOption>(10);
   const [page, setPage] = useState(1);
   const [showOnlySelected, setShowOnlySelected] = useState(false); // NUEVO
+  const [attachment, setAttachment] = useState<File | null>(null); // ✅ NUEVO: Estado para el archivo
 
   // Personas (catálogo)
   const peopleQ = useQuery({
@@ -453,10 +454,31 @@ export default function HandoverPage() {
         if (!form.signerName.trim()) throw new Error('Falta el nombre de quien firma');
         if (!form.signerId.trim()) throw new Error('Falta la identificación de quien firma');
         if (!form.relation) throw new Error('Selecciona el parentesco/relación');
+        if (!form.signatureData) throw new Error('La firma en pantalla es obligatoria');
       }
 
       const payload = buildPayload(form);
-      const { data } = await api.post('/api/handover', payload);
+// ✅ NUEVO: Como enviamos un archivo, debemos usar FormData en lugar de un JSON normal
+      const formData = new FormData();
+      
+      Object.entries(payload).forEach(([key, value]) => {
+        if (value !== null && value !== undefined) {
+          if (typeof value === 'object') {
+            formData.append(key, JSON.stringify(value)); // Convertimos las listas a texto
+          } else {
+            formData.append(key, String(value));
+          }
+        }
+      });
+
+      if (attachment) {
+        formData.append('attachment', attachment);
+      }
+
+      // Enviamos con header multipart
+      const { data } = await api.post('/api/handover', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
       return data;
     },
     onSuccess: (resp) => {
@@ -699,6 +721,18 @@ export default function HandoverPage() {
                     onChange={(e) => setForm({ ...form, notes: e.target.value })}
                     rows={3}
                   />
+                </div>
+                <div className="grid gap-1.5">
+                  <label className="text-sm">Soporte Manual (Opcional)</label>
+                  <input
+                    type="file"
+                    onChange={(e) => setAttachment(e.target.files?.[0] || null)}
+                    className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold hover:file:bg-slate-200 dark:file:bg-slate-800 dark:hover:file:bg-slate-700 cursor-pointer"
+                    accept=".pdf,image/*"
+                  />
+                  <p className="text-xs text-slate-500">
+                    Sube un PDF o foto si tienes el documento en físico.
+                  </p>
                 </div>
 
                 <div className="grid gap-1.5">
