@@ -1,10 +1,6 @@
 'use client';
 
-<<<<<<< HEAD
 import { useState } from 'react';
-=======
-import { useEffect, useState } from 'react';
->>>>>>> d5382373980952035700f47e7de633d588981602
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -15,16 +11,10 @@ import { toast } from 'sonner';
 import { tMovement, tLifeState } from '@/lib/i18n';
 import Guard from '@/components/auth-guard';
 
-<<<<<<< HEAD
 /* === Tipos === */
 type Attachment = {
   id: string;
-  type: string;
-=======
-type Attachment = {
-  id: string;
   type: 'SOPORTE_BAJA' | 'FACTURA_COMPRA' | string;
->>>>>>> d5382373980952035700f47e7de633d588981602
   fileName: string;
   path: string;
   size: number;
@@ -143,15 +133,12 @@ export default function AssetDetail() {
   const qc = useQueryClient();
 
   const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '') || '';
-<<<<<<< HEAD
 
   // === ESTADOS PARA MODALES ===
   const [confirmDel, setConfirmDel] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewName, setPreviewName] = useState<string | null>(null);
   const [selectedHandover, setSelectedHandover] = useState<any>(null);
-=======
->>>>>>> d5382373980952035700f47e7de633d588981602
 
   const meQ = useQuery({
     queryKey: ['me'],
@@ -166,12 +153,7 @@ export default function AssetDetail() {
 
   const assetQ = useQuery({
     queryKey: ['asset', id],
-<<<<<<< HEAD
     queryFn: async () => (await api.get<ApiAsset>(`/api/assets/${id}`)).data,
-=======
-    queryFn: async () =>
-      (await api.get<ApiAsset>(`/api/assets/${id}`)).data,
->>>>>>> d5382373980952035700f47e7de633d588981602
     enabled: !!id,
   });
 
@@ -189,7 +171,6 @@ export default function AssetDetail() {
     histQ.refetch();
   };
 
-<<<<<<< HEAD
   // Función para abrir la vista previa de anexos o soportes
   const openPreview = (url: string, name: string) => {
     const finalUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url}`;
@@ -226,12 +207,6 @@ export default function AssetDetail() {
     }
   };
 
-=======
-  const [confirmDel, setConfirmDel] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewName, setPreviewName] = useState<string | null>(null);
-
->>>>>>> d5382373980952035700f47e7de633d588981602
   if (assetQ.isLoading) return <Guard><p className="p-4">Cargando…</p></Guard>;
   if (!assetQ.data) return <Guard><p className="p-4">No encontrado.</p></Guard>;
 
@@ -283,21 +258,7 @@ export default function AssetDetail() {
 
   const attachments: Attachment[] = Array.isArray(a.attachments) ? a.attachments : [];
   const topAttachments = attachments.slice(0, 5);
-  const typeLabel = (t: Attachment['type']) => t === 'SOPORTE_BAJA' ? 'Soporte de baja' : 'Factura de compra';
-<<<<<<< HEAD
-=======
-
-  const openPreview = (att: Attachment) => {
-    const url = att.path.startsWith('http') ? att.path : `${API_BASE_URL}${att.path}`;
-    setPreviewUrl(url);
-    setPreviewName(att.fileName || 'Anexo');
-  };
-
-  const closePreview = () => {
-    setPreviewUrl(null);
-    setPreviewName(null);
-  };
->>>>>>> d5382373980952035700f47e7de633d588981602
+  const typeLabel = (t: Attachment['type']) => t === 'SOPORTE_BAJA' ? 'Soporte de baja' : t === 'FACTURA_COMPRA' ? 'Factura de compra' : 'Documento';
 
   return (
     <Guard>
@@ -319,40 +280,24 @@ export default function AssetDetail() {
             </div>
           </div>
 
-<<<<<<< HEAD
-=======
-          {/* Acciones (solo SUPER_ADMIN / ACTIVOS_FIJOS) */}
->>>>>>> d5382373980952035700f47e7de633d588981602
           {canManage && (
             <div className="mt-3 flex flex-wrap gap-2">
               <MovementActions assetId={id} currentLocationId={a.currentLocation?.id || null} onDone={refetchAll} />
               <Link
                 href={`/assets/${id}/edit`}
                 className="px-3 py-2 rounded-lg border text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
-<<<<<<< HEAD
-=======
-                title="Editar activo"
->>>>>>> d5382373980952035700f47e7de633d588981602
               >
                 Editar
               </Link>
               <Link
                 href={`/assets/${id}/anexos`}
                 className="px-3 py-2 rounded-lg border text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
-<<<<<<< HEAD
-=======
-                title="Gestionar anexos"
->>>>>>> d5382373980952035700f47e7de633d588981602
               >
                 Anexos
               </Link>
               <button
                 onClick={() => setConfirmDel(true)}
                 className="px-3 py-2 rounded-lg bg-rose-600 text-white text-sm hover:opacity-95"
-<<<<<<< HEAD
-=======
-                title="Eliminar activo"
->>>>>>> d5382373980952035700f47e7de633d588981602
               >
                 Eliminar
               </button>
@@ -360,11 +305,7 @@ export default function AssetDetail() {
           )}
         </div>
 
-<<<<<<< HEAD
         {/* Información Técnica */}
-=======
-        {/* Información del activo */}
->>>>>>> d5382373980952035700f47e7de633d588981602
         <div className="border rounded-xl bg-white dark:bg-slate-900 p-4">
           <h2 className="font-medium mb-3">Información del activo</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 text-sm">
@@ -388,11 +329,7 @@ export default function AssetDetail() {
           </div>
         </div>
 
-<<<<<<< HEAD
         {/* Anexos Fijos */}
-=======
-        {/* Anexos */}
->>>>>>> d5382373980952035700f47e7de633d588981602
         <div className="border rounded-xl bg-white dark:bg-slate-900">
           <div className="px-4 py-3 font-medium border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <h2>Anexos</h2>
@@ -419,11 +356,7 @@ export default function AssetDetail() {
                     <div className="flex items-center gap-2 shrink-0">
                       <button
                         type="button"
-<<<<<<< HEAD
                         onClick={() => openPreview(att.path, att.fileName)}
-=======
-                        onClick={() => openPreview(att)}
->>>>>>> d5382373980952035700f47e7de633d588981602
                         className="text-sm rounded-lg border px-3 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800"
                       >
                         Ver
@@ -436,24 +369,16 @@ export default function AssetDetail() {
           </div>
         </div>
 
-<<<<<<< HEAD
         {/* RESTAURADO: Historial en su recuadro con Scroll original */}
         <div className="border rounded-xl bg-white dark:bg-slate-900">
           <h2 className="px-4 py-3 font-medium border-b border-slate-100 dark:border-slate-800">
             Historial de Movimientos
-=======
-        {/* Historial */}
-        <div className="border rounded-xl bg-white dark:bg-slate-900">
-          <h2 className="px-4 py-3 font-medium border-b border-slate-100 dark:border-slate-800">
-            Historial
->>>>>>> d5382373980952035700f47e7de633d588981602
           </h2>
           <div className="p-4">
             <div className="rounded-lg border bg-white dark:bg-slate-900 max-h-[380px] overflow-auto">
               {histQ.data && histQ.data.items.length > 0 ? (
                 <ul className="p-3 space-y-3">
                   {histQ.data.items.map((m: MovementRow) => (
-<<<<<<< HEAD
                     <li 
                       key={m.id} 
                       onClick={() => openMovementDetail(m)}
@@ -461,11 +386,6 @@ export default function AssetDetail() {
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-medium text-sm group-hover:text-sky-600 transition-colors">
-=======
-                    <li key={m.id} className="rounded-lg border p-3">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium text-sm">
->>>>>>> d5382373980952035700f47e7de633d588981602
                           {tMovement(m.type)}
                         </span>
                         <span className="text-xs text-slate-500">
@@ -491,7 +411,6 @@ export default function AssetDetail() {
                 </div>
               )}
             </div>
-<<<<<<< HEAD
             <p className="text-xs text-slate-400 mt-2 italic text-center">Haz clic en cualquier movimiento para ver más detalles o evidencias.</p>
           </div>
         </div>
@@ -544,7 +463,6 @@ export default function AssetDetail() {
                       </div>
                     )}
 
-                    {/* RESTAURADO: Soporte Adjunto usa Preview en lugar de Pestaña Nueva */}
                     {selectedHandover.attachmentPath ? (
                       <div className="bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-xl border border-emerald-100 dark:border-emerald-800">
                         <div className="flex items-center justify-between">
@@ -576,17 +494,9 @@ export default function AssetDetail() {
           </div>
         )}
 
-        {/* Vista previa de Archivos (Usa z-[60] para sobreponerse al modal de detalles si es necesario) */}
+        {/* Vista previa de Archivos */}
         {previewUrl && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={closePreview}>
-=======
-          </div>
-        </div>
-
-        {/* Modal de vista previa */}
-        {previewUrl && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={closePreview}>
->>>>>>> d5382373980952035700f47e7de633d588981602
             <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-5xl h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between px-4 py-2 border-b border-slate-200 dark:border-slate-800">
                 <h3 className="text-sm font-semibold truncate">
@@ -605,11 +515,7 @@ export default function AssetDetail() {
 
         {/* Modal Eliminar */}
         {canManage && confirmDel && (
-<<<<<<< HEAD
           <div className="fixed inset-0 bg-black/30 grid place-items-center p-4 z-[70]">
-=======
-          <div className="fixed inset-0 bg-black/30 grid place-items-center p-4 z-50">
->>>>>>> d5382373980952035700f47e7de633d588981602
             <div className="w-full max-w-sm rounded-xl border bg-white dark:bg-slate-900 p-4 space-y-3">
               <h4 className="font-medium">Eliminar activo</h4>
               <p className="text-sm text-slate-600">
