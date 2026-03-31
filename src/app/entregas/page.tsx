@@ -15,7 +15,7 @@ type Person = {
   documentId?: string | null;
   finalStatus?: string | null;
   inactivityDate?: string | null;
-  userType?: string | null; // ya lo agregaste antes
+  userType?: string | null;
 };
 
 type AssetStatus = 'IN_STOCK' | 'ASSIGNED' | string;
@@ -59,7 +59,7 @@ type FormState = {
   reason: string;
   homeDelivery: boolean;
   driverId?: string | null;
-  scheduledDate: string; // fecha programada (YYYY-MM-DD)
+  scheduledDate: string;
 };
 
 const DELIVERY_REASONS = [
@@ -84,9 +84,6 @@ const PICKUP_REASONS = [
   'BAJA DEL ACTIVO',
 ] as const;
 
-/* ─────────────────────────────────────────────────────────────
-   Select simple reutilizable
-────────────────────────────────────────────────────────────── */
 function SimplePicker<T extends { id: string; fullName?: string | null; email?: string | null }>(props: {
   items: T[];
   value?: string | null;
@@ -247,9 +244,6 @@ const DriverPicker = (props: {
 
 type PageSizeOption = 10 | 50 | 100 | 'ALL';
 
-/* ─────────────────────────────────────────────────────────────
-   Página
-────────────────────────────────────────────────────────────── */
 export default function HandoverPage() {
   const qc = useQueryClient();
   const router = useRouter();
@@ -274,10 +268,9 @@ export default function HandoverPage() {
   const [assetQ, setAssetQ] = useState('');
   const [pageSize, setPageSize] = useState<PageSizeOption>(10);
   const [page, setPage] = useState(1);
-  const [showOnlySelected, setShowOnlySelected] = useState(false); // NUEVO
-  const [attachment, setAttachment] = useState<File | null>(null); // ✅ NUEVO: Estado para el archivo
+  const [showOnlySelected, setShowOnlySelected] = useState(false);
+  const [attachment, setAttachment] = useState<File | null>(null);
 
-  // Personas (catálogo)
   const peopleQ = useQuery({
     queryKey: ['catalog-persons-for-picker'],
     queryFn: async () => {
@@ -288,7 +281,6 @@ export default function HandoverPage() {
     },
   });
 
-  // Conductores (usuarios con rol CONDUCTOR)
   const driversQ = useQuery({
     queryKey: ['drivers'],
     queryFn: async () => {
@@ -297,7 +289,6 @@ export default function HandoverPage() {
     },
   });
 
-  // En ENTREGAS ocultar inactivos
   const visiblePeople = useMemo(() => {
     const arr = peopleQ.data ?? [];
     if (form.type !== 'ENTREGA') return arr;
@@ -308,7 +299,6 @@ export default function HandoverPage() {
     });
   }, [peopleQ.data, form.type]);
 
-  // Activos
   const allAssets = useQuery({
     queryKey: ['assets-mini'],
     queryFn: async () =>
@@ -337,7 +327,6 @@ export default function HandoverPage() {
   const visibleAssets = useMemo(() => {
     let source = baseVisibleAssets;
 
-    // NUEVO: solo seleccionados
     if (showOnlySelected && form.assetIds.length > 0) {
       const idsSet = new Set(form.assetIds);
       source = source.filter((a) => idsSet.has(a.id));
@@ -354,17 +343,14 @@ export default function HandoverPage() {
     });
   }, [baseVisibleAssets, assetQ, showOnlySelected, form.assetIds]);
 
-  // Reset selección y motivo si cambia tipo o persona
   useEffect(() => {
     setForm((f) => ({ ...f, assetIds: [], reason: '' }));
   }, [form.type, form.personId]);
 
-  // Cuando cambias tipo/persona, quita el filtro "solo seleccionados"
   useEffect(() => {
     setShowOnlySelected(false);
   }, [form.type, form.personId]);
 
-  // Limpiar firma/contacto si es domicilio
   useEffect(() => {
     if (form.homeDelivery) {
       setForm((f) => ({
@@ -380,7 +366,6 @@ export default function HandoverPage() {
     }
   }, [form.homeDelivery]);
 
-  // Reset página cuando cambian filtros o tipo
   useEffect(() => {
     setPage(1);
   }, [assetQ, form.type, form.personId, pageSize, showOnlySelected]);
@@ -454,17 +439,18 @@ export default function HandoverPage() {
         if (!form.signerName.trim()) throw new Error('Falta el nombre de quien firma');
         if (!form.signerId.trim()) throw new Error('Falta la identificación de quien firma');
         if (!form.relation) throw new Error('Selecciona el parentesco/relación');
+        if (!form.email.trim()) throw new Error('Falta el correo electrónico de quien firma');
+        if (!form.phone.trim()) throw new Error('Falta el teléfono de quien firma');
         if (!form.signatureData) throw new Error('La firma en pantalla es obligatoria');
       }
 
       const payload = buildPayload(form);
-// ✅ NUEVO: Como enviamos un archivo, debemos usar FormData en lugar de un JSON normal
       const formData = new FormData();
       
       Object.entries(payload).forEach(([key, value]) => {
         if (value !== null && value !== undefined) {
           if (typeof value === 'object') {
-            formData.append(key, JSON.stringify(value)); // Convertimos las listas a texto
+            formData.append(key, JSON.stringify(value));
           } else {
             formData.append(key, String(value));
           }
@@ -475,8 +461,6 @@ export default function HandoverPage() {
         formData.append('attachment', attachment);
       }
 
-      // Enviamos con header multipart
-    // Enviamos el formData directo, Axios se encarga de las cabeceras automáticamente
       const { data } = await api.post('/api/handover', formData);
       return data;
     },
@@ -510,6 +494,7 @@ export default function HandoverPage() {
         scheduledDate: '',
       });
       setShowOnlySelected(false);
+      setAttachment(null); // Limpiamos el archivo adjunto
 
       qc.invalidateQueries({ queryKey: ['assets-mini'] });
       qc.invalidateQueries({ queryKey: ['routes'] });
@@ -722,10 +707,12 @@ export default function HandoverPage() {
                     rows={3}
                   />
                 </div>
+
                 <div className="grid gap-1.5">
                   <label className="text-sm">Soporte Manual (Opcional)</label>
                   <input
                     type="file"
+                    value={attachment ? undefined : ''} 
                     onChange={(e) => setAttachment(e.target.files?.[0] || null)}
                     className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold hover:file:bg-slate-200 dark:file:bg-slate-800 dark:hover:file:bg-slate-700 cursor-pointer"
                     accept=".pdf,image/*"
