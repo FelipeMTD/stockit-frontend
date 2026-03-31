@@ -269,7 +269,10 @@ export default function HandoverPage() {
   const [pageSize, setPageSize] = useState<PageSizeOption>(10);
   const [page, setPage] = useState(1);
   const [showOnlySelected, setShowOnlySelected] = useState(false);
+  
+  // ✅ CORRECCIÓN: Usamos un fileKey para obligar a React a limpiar el input correctamente
   const [attachment, setAttachment] = useState<File | null>(null);
+  const [fileKey, setFileKey] = useState(Date.now());
 
   const peopleQ = useQuery({
     queryKey: ['catalog-persons-for-picker'],
@@ -457,6 +460,7 @@ export default function HandoverPage() {
         }
       });
 
+      // ✅ Enviamos el archivo 100% seguro
       if (attachment) {
         formData.append('attachment', attachment);
       }
@@ -494,7 +498,10 @@ export default function HandoverPage() {
         scheduledDate: '',
       });
       setShowOnlySelected(false);
-      setAttachment(null); // Limpiamos el archivo adjunto
+      
+      // ✅ Limpiamos el archivo visualmente y en el estado
+      setAttachment(null);
+      setFileKey(Date.now()); 
 
       qc.invalidateQueries({ queryKey: ['assets-mini'] });
       qc.invalidateQueries({ queryKey: ['routes'] });
@@ -711,8 +718,8 @@ export default function HandoverPage() {
                 <div className="grid gap-1.5">
                   <label className="text-sm">Soporte Manual (Opcional)</label>
                   <input
+                    key={fileKey} // ✅ La magia de React, evita bugs con los archivos
                     type="file"
-                    value={attachment ? undefined : ''} 
                     onChange={(e) => setAttachment(e.target.files?.[0] || null)}
                     className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold hover:file:bg-slate-200 dark:file:bg-slate-800 dark:hover:file:bg-slate-700 cursor-pointer"
                     accept=".pdf,image/*"
