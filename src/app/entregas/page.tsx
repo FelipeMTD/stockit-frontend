@@ -476,11 +476,11 @@ export default function HandoverPage() {
       }
 
       // Enviamos con header multipart
-      const { data } = await api.post('/api/handover', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+    // Enviamos el formData directo, Axios se encarga de las cabeceras automáticamente
+      const { data } = await api.post('/api/handover', formData);
       return data;
     },
+
     onSuccess: (resp) => {
       toast.success(form.type === 'ENTREGA' ? 'Entrega registrada' : 'Recogida registrada');
 
