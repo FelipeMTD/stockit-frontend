@@ -72,12 +72,7 @@ export default function AssetDetailPage() {
   const [openDropdown, setOpenDropdown] = useState<string | null>(null); 
   const [previewFile, setPreviewFile] = useState<{ url: string, name: string, isImage: boolean } | null>(null);
 
-  // ✅ URL BASE A PRUEBA DE BALAS: Toma la IP real del dispositivo actual
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL 
-    ? process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '') 
-    : typeof window !== 'undefined' 
-      ? `${window.location.protocol}//${window.location.hostname}:4000` 
-      : 'http://localhost:4000';
+  const API_BASE = (process.env.NEXT_PUBLIC_API_URL || api.defaults.baseURL || 'http://localhost:4000').replace(/\/+$/, '');
 
   const listAttachmentsQ = useQuery({
     queryKey: ['asset-attachments', id],
@@ -114,12 +109,11 @@ export default function AssetDetailPage() {
   const handleOpenMovement = (mov: any) => { setSelectedMovement(mov); setViewMode('DETAILS'); };
 
   const handlePreviewAttachment = (att: Attachment) => {
-    let cleanPath = att.path;
-    // Si la DB guardó un dominio extraño, nos quedamos solo con "/uploads/..."
-    const uIdx = cleanPath.indexOf('/uploads/');
-    if (uIdx !== -1) cleanPath = cleanPath.substring(uIdx);
-
-    const url = `${API_BASE}/${cleanPath.replace(/^\/+/, '')}`;
+    let url = att.path;
+    if (url.startsWith('http')) {
+        try { url = new URL(url).pathname; } catch(e) {}
+    }
+    url = `${API_BASE}/${url.replace(/^\/+/, '')}`;
     const isImage = att.mime?.startsWith('image/') || url.toLowerCase().match(/\.(jpg|jpeg|png|gif|svg)$/) || false;
     setPreviewFile({ url, name: att.fileName, isImage: !!isImage });
   };
@@ -134,21 +128,37 @@ export default function AssetDetailPage() {
   const riskLevel = String(asset.riskLevel || '—');
   const maintFreq = String(asset.maintenanceFrequency || 'NO APLICA');
 
-  // ✅ EXTRACCIÓN BULLETPROOF DEL COMODATO (IGNORA LOCALHOST)
+  // ✅ MAGIA RETROACTIVA PARA HISTORIALES VIEJOS Y NUEVOS
   let displayNotes = selectedMovement?.notes || '';
   let pdfUrl: string | null = null;
-  if (displayNotes) {
-    const pdfMatch = displayNotes.match(/\[PDF\]:(https?:\/\/[^\s]+|\/uploads[^\s]+)/);
-    if (pdfMatch) {
-      const rawUrl = pdfMatch[1];
-      let cleanPath = rawUrl;
-      const uIdx = cleanPath.indexOf('/uploads/');
-      if (uIdx !== -1) cleanPath = cleanPath.substring(uIdx);
+  let handoverId: string | null = null;
 
-      pdfUrl = `${API_BASE}/${cleanPath.replace(/^\/+/, '')}`;
-      displayNotes = displayNotes.replace(pdfMatch[0], '').trim();
-      displayNotes = displayNotes.replace(/^\|\s*/, '').replace(/\s*\|\s*$/, '').trim();
+  // 1. Extraemos el ID si el movimiento tiene la referencia "H:id" (Entregas Manuales Viejas y Nuevas)
+  if (selectedMovement?.reference?.startsWith('H:')) {
+    handoverId = selectedMovement.reference.replace('H:', '').trim();
+  } 
+  // 2. Extraemos el ID si la nota tiene el texto de "Generada desde Entregas..." (Rutas Viejas)
+  else if (displayNotes.match(/Generada desde Entregas y Recogidas ([a-zA-Z0-9_-]+)/i)) {
+    const match = displayNotes.match(/Generada desde Entregas y Recogidas ([a-zA-Z0-9_-]+)/i);
+    if (match) handoverId = match[1].trim();
+  }
+
+  // 3. Buscamos el enlace explícito (Para el sistema nuevo)
+  const explicitPdfMatch = displayNotes.match(/\[PDF\]:(https?:\/\/[^\s]+|\/uploads[^\s]+)/);
+
+  if (explicitPdfMatch) {
+    let rawUrl = explicitPdfMatch[1];
+    let cleanPath = rawUrl;
+    if (rawUrl.startsWith('http')) {
+        try { cleanPath = new URL(rawUrl).pathname; } catch(e) {}
     }
+    pdfUrl = `${API_BASE}/${cleanPath.replace(/^\/+/, '')}`;
+    displayNotes = displayNotes.replace(explicitPdfMatch[0], '').trim();
+    displayNotes = displayNotes.replace(/^\|\s*/, '').replace(/\s*\|\s*$/, '').trim();
+  } 
+  // 4. SI NO HAY ENLACE EXPLÍCITO PERO TENEMOS EL ID, LO DEDUCIMOS! (Para los registros viejos)
+  else if (handoverId) {
+    pdfUrl = `${API_BASE}/uploads/handovers/Comodato_${handoverId}.pdf`;
   }
 
   const attachments = listAttachmentsQ.data?.items || [];
@@ -267,8 +277,9 @@ export default function AssetDetailPage() {
               <ul className="space-y-3">
                 {attachments.map((att) => {
                   let downloadUrl = att.path;
-                  const uIdx = downloadUrl.indexOf('/uploads/');
-                  if (uIdx !== -1) downloadUrl = downloadUrl.substring(uIdx);
+                  if (downloadUrl.startsWith('http')) {
+                      try { downloadUrl = new URL(downloadUrl).pathname; } catch(e) {}
+                  }
                   downloadUrl = `${API_BASE}/${downloadUrl.replace(/^\/+/, '')}`;
 
                   const isDropdownOpen = openDropdown === att.id;
@@ -287,7 +298,7 @@ export default function AssetDetailPage() {
                          </div>
                          <div className="min-w-0 flex-1">
                            <p className="text-sm font-bold text-slate-800 uppercase tracking-tight truncate">{att.type === 'SOPORTE_BAJA' ? 'SOPORTE DE BAJA' : 'FACTURA DE COMPRA'}</p>
-                           <p className="text-[10px] text-slate-500 font-medium truncate">{att.fileName}</p>
+                           <p className="text-[10px] text-slate-500 font-medium truncate" title={att.fileName}>{att.fileName} • {formatBytes(att.size)} • {new Date(att.createdAt).toLocaleDateString('es-CO')}</p>
                          </div>
                       </div>
 
@@ -384,7 +395,6 @@ export default function AssetDetailPage() {
 
              <div className="flex-1 w-full h-full overflow-hidden p-2 sm:p-6 bg-slate-300 flex flex-col items-center justify-center relative">
                
-               {/* 🟡 CAJA AMARILLA DE DIAGNÓSTICO DE URL */}
                <div className="absolute top-2 inset-x-2 sm:top-4 sm:inset-x-4 bg-yellow-100 border border-yellow-400 text-yellow-800 text-[10px] rounded-lg p-2 shadow-md z-10 truncate">
                  <span className="font-medium mr-2">URL Abierta:</span> 
                  <a href={previewFile.url} target="_blank" className="underline font-bold">{previewFile.url}</a>
@@ -394,10 +404,8 @@ export default function AssetDetailPage() {
                   <img src={previewFile.url} alt={previewFile.name} className="max-w-full max-h-full object-contain rounded-xl shadow-2xl bg-white mt-10" />
                ) : (
                   <>
-                    {/* VISOR DE PDF NATIVO PARA PC */}
                     <iframe src={`${previewFile.url}#view=FitH`} className="hidden sm:block w-full flex-1 rounded-xl shadow-2xl bg-white border-0 mt-8" title={previewFile.name} />
                     
-                    {/* VISOR DE RESPALDO PARA CELULAR (Soluciona el bloqueo) */}
                     <div className="sm:hidden w-full flex-1 flex flex-col items-center justify-center bg-white rounded-xl shadow-2xl mt-8 p-6 text-center border-2 border-dashed border-slate-300">
                        <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mb-4">
                          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -485,7 +493,7 @@ export default function AssetDetailPage() {
                   </div>
                 )}
 
-                {/* ✅ BOTÓN QUE ENVÍA LA URL AL VISOR GIGANTE */}
+                {/* ✅ BOTÓN QUE ABRE EL COMODATO USANDO EL MISMO VISOR DE LOS ANEXOS */}
                 {pdfUrl && (
                   <div className="mt-4 pt-4 border-t border-slate-200">
                     <button 
