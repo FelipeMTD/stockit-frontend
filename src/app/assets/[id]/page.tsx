@@ -64,7 +64,6 @@ export default function AssetDetailPage() {
 
   const [mounted, setMounted] = useState(false);
   const [selectedMovement, setSelectedMovement] = useState<any | null>(null);
-  const [viewMode, setViewMode] = useState<'DETAILS' | 'PDF_VIEWER'>('DETAILS');
 
   const [file, setFile] = useState<File | null>(null);
   const [attType, setAttType] = useState<AttachmentType>('FACTURA_COMPRA');
@@ -72,7 +71,7 @@ export default function AssetDetailPage() {
   const [openDropdown, setOpenDropdown] = useState<string | null>(null); 
   const [previewFile, setPreviewFile] = useState<{ url: string, name: string, isImage: boolean } | null>(null);
 
-  // ✅ URL BASE A PRUEBA DE BALAS: Toma la IP real del dispositivo actual
+  // ✅ URL BASE A PRUEBA DE BALAS PARA CELULARES Y PC
   const API_BASE = process.env.NEXT_PUBLIC_API_URL 
     ? process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '') 
     : typeof window !== 'undefined' 
@@ -111,7 +110,7 @@ export default function AssetDetailPage() {
 
   useEffect(() => { setMounted(true); }, []);
 
-  const handleOpenMovement = (mov: any) => { setSelectedMovement(mov); setViewMode('DETAILS'); };
+  const handleOpenMovement = (mov: any) => { setSelectedMovement(mov); };
 
   const handlePreviewAttachment = (att: Attachment) => {
     let cleanPath = att.path;
@@ -133,24 +132,12 @@ export default function AssetDetailPage() {
   const riskLevel = String(asset.riskLevel || '—');
   const maintFreq = String(asset.maintenanceFrequency || 'NO APLICA');
 
-
-  // ✅ MAGIA RETROACTIVA + EXTRACCIÓN BULLETPROOF DEL COMODATO (IGNORA LOCALHOST)
+  // ✅ EXTRACCIÓN INFALIBLE DEL COMODATO
   let displayNotes = selectedMovement?.notes || '';
   let pdfUrl: string | null = null;
-  let handoverId: string | null = null;
 
-  // 1. Extraemos el ID si el movimiento tiene la referencia "H:id" (Entregas Manuales)
-  if (selectedMovement?.reference?.startsWith('H:')) {
-    handoverId = selectedMovement.reference.replace('H:', '').trim();
-  } 
-  // 2. Extraemos el ID si la nota tiene el texto de "Generada desde Entregas..." (Rutas Viejas)
-  else if (displayNotes.match(/Generada desde Entregas y Recogidas ([a-zA-Z0-9_-]+)/i)) {
-    const match = displayNotes.match(/Generada desde Entregas y Recogidas ([a-zA-Z0-9_-]+)/i);
-    if (match) handoverId = match[1].trim();
-  }
-
-  // 3. Buscamos el enlace explícito (Sistemas Nuevos con el [PDF]:)
-  const explicitPdfMatch = displayNotes.match(/\[PDF\]:(https?:\/\/[^\s]+|\/uploads[^\s]+)/);
+  // 1. Buscamos el enlace explícito [PDF]: que inyecta el sistema nuevo
+  const explicitPdfMatch = displayNotes.match(/\[PDF\]:\s*(.+?\.pdf)/i);
 
   if (explicitPdfMatch) {
     const rawUrl = explicitPdfMatch[1];
@@ -159,13 +146,19 @@ export default function AssetDetailPage() {
     if (uIdx !== -1) cleanPath = cleanPath.substring(uIdx);
 
     pdfUrl = `${API_BASE}/${cleanPath.replace(/^\/+/, '')}`;
-    displayNotes = displayNotes.replace(explicitPdfMatch[0], '').trim();
+    
+    // Limpiamos la nota para que no se vea el link feo en pantalla
+    displayNotes = displayNotes.replace(/\[PDF\]:\s*(.+?\.pdf)/i, '').trim();
     displayNotes = displayNotes.replace(/^\|\s*/, '').replace(/\s*\|\s*$/, '').trim();
   } 
-  // 4. SI NO HAY ENLACE EXPLÍCITO PERO TENEMOS EL ID, LO DEDUCIMOS! (Para los registros viejos)
-  else if (handoverId) {
+  // 2. Si no hay link, pero es una entrega manual vieja (H:id), deducimos la ruta
+  else if (selectedMovement?.reference?.startsWith('H:')) {
+    const handoverId = selectedMovement.reference.replace('H:', '').trim();
     pdfUrl = `${API_BASE}/uploads/handovers/Comodato_${handoverId}.pdf`;
   }
+
+  // Verificamos si es una ruta antigua para poder avisarle al usuario
+  const isOldRoute = !pdfUrl && selectedMovement?.reference?.startsWith('ROUTE:');
 
   const attachments = listAttachmentsQ.data?.items || [];
 
@@ -400,7 +393,6 @@ export default function AssetDetailPage() {
 
              <div className="flex-1 w-full h-full overflow-hidden p-2 sm:p-6 bg-slate-300 flex flex-col items-center justify-center relative">
                
-               {/* 🟡 CAJA AMARILLA DE DIAGNÓSTICO DE URL */}
                <div className="absolute top-2 inset-x-2 sm:top-4 sm:inset-x-4 bg-yellow-100 border border-yellow-400 text-yellow-800 text-[10px] rounded-lg p-2 shadow-md z-10 truncate">
                  <span className="font-medium mr-2">URL Abierta:</span> 
                  <a href={previewFile.url} target="_blank" className="underline font-bold">{previewFile.url}</a>
@@ -410,10 +402,8 @@ export default function AssetDetailPage() {
                   <img src={previewFile.url} alt={previewFile.name} className="max-w-full max-h-full object-contain rounded-xl shadow-2xl bg-white mt-10" />
                ) : (
                   <>
-                    {/* VISOR DE PDF NATIVO PARA PC */}
                     <iframe src={`${previewFile.url}#view=FitH`} className="hidden sm:block w-full flex-1 rounded-xl shadow-2xl bg-white border-0 mt-8" title={previewFile.name} />
                     
-                    {/* VISOR DE RESPALDO PARA CELULAR (Soluciona el bloqueo) */}
                     <div className="sm:hidden w-full flex-1 flex flex-col items-center justify-center bg-white rounded-xl shadow-2xl mt-8 p-6 text-center border-2 border-dashed border-slate-300">
                        <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mb-4">
                          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -431,7 +421,7 @@ export default function AssetDetailPage() {
         </div>
       )}
 
-      {/* MODAL DE DETALLES DEL MOVIMIENTO (DONDE ESTÁ EL BOTÓN DEL COMODATO) */}
+      {/* MODAL DE DETALLES DEL MOVIMIENTO */}
       {selectedMovement && !previewFile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in">
           <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[95vh] flex flex-col shadow-2xl overflow-hidden transition-all duration-300">
@@ -501,8 +491,8 @@ export default function AssetDetailPage() {
                   </div>
                 )}
 
-                {/* ✅ BOTÓN QUE ENVÍA LA URL AL VISOR GIGANTE QUE SÍ FUNCIONA */}
-                {pdfUrl && (
+                {/* ✅ BOTÓN DEL COMODATO (Aparece si hay PDF) */}
+                {pdfUrl ? (
                   <div className="mt-4 pt-4 border-t border-slate-200">
                     <button 
                       onClick={() => setPreviewFile({ url: pdfUrl as string, name: 'Comodato_Original.pdf', isImage: false })} 
@@ -512,7 +502,12 @@ export default function AssetDetailPage() {
                       Ver PDF del Comodato Original
                     </button>
                   </div>
-                )}
+                ) : isOldRoute ? (
+                  // MENSAJE DE ADVERTENCIA PARA RUTAS VIEJAS SIN COMODATO ENLAZADO
+                  <div className="mt-4 pt-4 border-t border-slate-200">
+                     <p className="text-[10px] text-slate-500 font-medium italic text-center p-3 bg-slate-100 rounded-lg">El comodato de esta ruta antigua no está enlazado directamente. Para nuevas entregas aparecerá aquí el botón.</p>
+                  </div>
+                ) : null}
               </div>
             </div>
             
