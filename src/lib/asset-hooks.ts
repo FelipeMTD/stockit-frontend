@@ -10,6 +10,15 @@ export function useAsset(id: string) {
   });
 }
 
+// ✅ NUEVO: Hook para obtener el historial de movimientos de un activo específico
+export function useAssetMovements(id: string, page = 1, pageSize = 50) {
+  return useQuery({
+    queryKey: ['asset-movements', id, page, pageSize],
+    queryFn: async () => (await api.get(`/api/movements/by-asset/${id}`, { params: { page, pageSize } })).data,
+    enabled: !!id
+  });
+}
+
 export function useUpdateAsset(id: string) {
   const qc = useQueryClient();
   return useMutation({
