@@ -64,15 +64,16 @@ export default function AssetDetailPage() {
 
   const [mounted, setMounted] = useState(false);
   const [selectedMovement, setSelectedMovement] = useState<any | null>(null);
-  const [viewMode, setViewMode] = useState<'DETAILS' | 'PDF_VIEWER'>('DETAILS');
 
   const [file, setFile] = useState<File | null>(null);
   const [attType, setAttType] = useState<AttachmentType>('FACTURA_COMPRA');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null); 
+  
+  // ✅ VISOR ÚNICO: Maneja tanto Anexos como Comodatos
   const [previewFile, setPreviewFile] = useState<{ url: string, name: string, isImage: boolean } | null>(null);
 
-  // ✅ URL SEGURA PARA PRODUCCIÓN: Toma la variable de entorno o la configuración de Axios
+  // URL base segura para producción o desarrollo
   const API_BASE = (process.env.NEXT_PUBLIC_API_URL || api.defaults.baseURL || 'http://localhost:4000').replace(/\/+$/, '');
 
   const listAttachmentsQ = useQuery({
@@ -107,14 +108,14 @@ export default function AssetDetailPage() {
 
   useEffect(() => { setMounted(true); }, []);
 
-  const handleOpenMovement = (mov: any) => { setSelectedMovement(mov); setViewMode('DETAILS'); };
-
   const handlePreviewAttachment = (att: Attachment) => {
     let url = att.path;
     if (url.startsWith('http')) {
         try { url = new URL(url).pathname; } catch(e) {}
     }
-    url = `${API_BASE}/${url.replace(/^\/+/, '')}`;
+    if (!url.startsWith('/')) url = '/' + url;
+    url = `${API_BASE}${url}`;
+
     const isImage = att.mime?.startsWith('image/') || url.toLowerCase().match(/\.(jpg|jpeg|png|gif|svg)$/) || false;
     setPreviewFile({ url, name: att.fileName, isImage: !!isImage });
   };
@@ -129,9 +130,9 @@ export default function AssetDetailPage() {
   const riskLevel = String(asset.riskLevel || '—');
   const maintFreq = String(asset.maintenanceFrequency || 'NO APLICA');
 
-  // ✅ EXTRACCIÓN Y RECONSTRUCCIÓN ULTRA ROBUSTA DE LA URL DEL PDF COMODATO
+  // ✅ EXTRACCIÓN SEGURA DEL COMODATO PARA ENVIAR AL VISOR
   let displayNotes = selectedMovement?.notes || '';
-  let pdfUrl = null;
+  let pdfUrl: string | null = null;
   if (displayNotes) {
     const pdfMatch = displayNotes.match(/\[PDF\]:(https?:\/\/[^\s]+|\/uploads[^\s]+)/);
     if (pdfMatch) {
@@ -140,7 +141,9 @@ export default function AssetDetailPage() {
       if (rawUrl.startsWith('http')) {
           try { cleanPath = new URL(rawUrl).pathname; } catch(e) {}
       }
-      pdfUrl = `${API_BASE}/${cleanPath.replace(/^\/+/, '')}`;
+      if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
+      pdfUrl = `${API_BASE}${cleanPath}`;
+      
       displayNotes = displayNotes.replace(pdfMatch[0], '').trim();
       displayNotes = displayNotes.replace(/^\|\s*/, '').replace(/\s*\|\s*$/, '').trim();
     }
@@ -231,49 +234,21 @@ export default function AssetDetailPage() {
         </div>
       </div>
 
-      {/* 3. DOCUMENTOS Y ANEXOS */}
+      {/* ANEXOS */}
       <div className="mt-10">
         <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-4">Documentos y Anexos</h2>
-        
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          
-          {/* FORMULARIO DE CARGA (IZQUIERDA) */}
           <div className="bg-slate-50 rounded-2xl border border-slate-200 shadow-sm p-6 flex flex-col gap-4">
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-200 pb-3">Subir Nuevo Anexo</h3>
-            
-            <div className="grid gap-1.5">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">Tipo de Documento</label>
-              <select
-                value={attType}
-                onChange={(e) => setAttType(e.target.value as AttachmentType)}
-                className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm bg-white outline-none focus:border-sky-600 font-medium"
-              >
-                <option value="FACTURA_COMPRA">Factura de Compra</option>
-                <option value="SOPORTE_BAJA">Soporte de Baja</option>
-              </select>
-            </div>
-
-            <div className="grid gap-1.5">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">Archivo</label>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="application/pdf,image/*"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                className="rounded-xl border border-slate-300 px-3 py-2 text-xs bg-white file:mr-3 file:rounded-lg file:border-0 file:bg-slate-200 file:px-3 file:py-1 file:text-xs file:font-bold hover:file:bg-slate-300 cursor-pointer w-full overflow-hidden"
-              />
-            </div>
-
-            <button
-              onClick={() => uploadAttachment.mutate()}
-              disabled={uploadAttachment.isPending || !file}
-              className="w-full mt-2 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest py-3 shadow-lg hover:bg-slate-800 transition-all disabled:opacity-50"
-            >
+            <select value={attType} onChange={(e) => setAttType(e.target.value as AttachmentType)} className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm bg-white outline-none">
+              <option value="FACTURA_COMPRA">Factura de Compra</option>
+              <option value="SOPORTE_BAJA">Soporte de Baja</option>
+            </select>
+            <input ref={fileInputRef} type="file" accept="application/pdf,image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs bg-white cursor-pointer w-full" />
+            <button onClick={() => uploadAttachment.mutate()} disabled={uploadAttachment.isPending || !file} className="w-full mt-2 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest py-3 shadow-lg hover:bg-slate-800 disabled:opacity-50">
               {uploadAttachment.isPending ? 'Subiendo...' : 'Guardar Anexo'}
             </button>
           </div>
-
-          {/* LISTA DE ARCHIVOS (DERECHA) */}
           <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-200 pb-3 mb-4 flex justify-between items-center">
               <span>Archivos Guardados</span>
@@ -293,19 +268,15 @@ export default function AssetDetailPage() {
                   if (downloadUrl.startsWith('http')) {
                       try { downloadUrl = new URL(downloadUrl).pathname; } catch(e) {}
                   }
-                  downloadUrl = `${API_BASE}/${downloadUrl.replace(/^\/+/, '')}`;
+                  if (!downloadUrl.startsWith('/')) downloadUrl = '/' + downloadUrl;
+                  downloadUrl = `${API_BASE}${downloadUrl}`;
 
                   const isDropdownOpen = openDropdown === att.id;
                   const isImg = att.mime?.startsWith('image/') || att.fileName.toLowerCase().match(/\.(jpg|jpeg|png|gif)$/);
 
                   return (
-                    <li key={att.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 sm:p-4 flex items-center justify-between gap-3 hover:shadow-sm transition-shadow relative">
-                      
-                      {/* ÁREA CLIQUEABLE PARA VER EL DOCUMENTO */}
-                      <div 
-                        onClick={() => handlePreviewAttachment(att)}
-                        className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer hover:opacity-80 transition-opacity"
-                      >
+                    <li key={att.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 sm:p-4 flex items-center justify-between gap-3 relative">
+                      <div onClick={() => handlePreviewAttachment(att)} className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer hover:opacity-80">
                          <div className={`w-10 h-10 shrink-0 rounded-lg flex items-center justify-center font-black ${isImg ? 'bg-sky-100 text-sky-700' : 'bg-rose-100 text-rose-700'}`}>
                            {isImg ? (
                              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
@@ -314,108 +285,64 @@ export default function AssetDetailPage() {
                            )}
                          </div>
                          <div className="min-w-0 flex-1">
-                           <p className="text-sm font-bold text-slate-800 uppercase tracking-tight truncate">
-                             {att.type === 'SOPORTE_BAJA' ? 'SOPORTE DE BAJA' : 'FACTURA DE COMPRA'}
-                           </p>
-                           <p className="text-[10px] text-slate-500 font-medium truncate" title={att.fileName}>
-                             {att.fileName} • {formatBytes(att.size)} • {new Date(att.createdAt).toLocaleDateString('es-CO')}
-                           </p>
+                           <p className="text-sm font-bold text-slate-800 uppercase tracking-tight truncate">{att.type === 'SOPORTE_BAJA' ? 'SOPORTE DE BAJA' : 'FACTURA DE COMPRA'}</p>
+                           <p className="text-[10px] text-slate-500 font-medium truncate">{att.fileName}</p>
                          </div>
                       </div>
-
-                      {/* MENÚ DE 3 PUNTITOS */}
                       <div className="relative shrink-0">
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); setOpenDropdown(isDropdownOpen ? null : att.id); }} 
-                          className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-full transition-colors focus:outline-none"
-                        >
+                        <button onClick={(e) => { e.stopPropagation(); setOpenDropdown(isDropdownOpen ? null : att.id); }} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-full">
                           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
                         </button>
-                        
                         {isDropdownOpen && <div className="fixed inset-0 z-30" onClick={() => setOpenDropdown(null)} />}
-
                         {isDropdownOpen && (
-                          <div className="absolute right-0 top-10 mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-xl z-40 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-                            
-                            <a 
-                              href={downloadUrl} 
-                              download={att.fileName} 
-                              rel="noopener noreferrer" 
-                              onClick={() => setOpenDropdown(null)}
-                              className="flex items-center gap-3 px-4 py-3 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors w-full text-left"
-                            >
+                          <div className="absolute right-0 top-10 mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-xl z-40 py-1 overflow-hidden">
+                            <a href={downloadUrl} download={att.fileName} className="flex items-center gap-3 px-4 py-3 text-xs font-bold text-slate-700 hover:bg-slate-50">
                               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-sky-600"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
                               Descargar Archivo
                             </a>
-
-                            <button 
-                              onClick={() => { setOpenDropdown(null); if (confirm('¿Estás seguro de eliminar este documento anexo?')) removeAttachment.mutate(att.id); }} 
-                              className="flex items-center gap-3 px-4 py-3 text-xs font-bold text-rose-600 hover:bg-rose-50 transition-colors w-full text-left border-t border-slate-100"
-                            >
+                            <button onClick={() => { setOpenDropdown(null); if (confirm('¿Eliminar anexo?')) removeAttachment.mutate(att.id); }} className="w-full flex items-center gap-3 text-left px-4 py-3 text-xs font-bold text-rose-600 hover:bg-rose-50 border-t border-slate-100">
                               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
                               Eliminar Anexo
                             </button>
                           </div>
                         )}
                       </div>
-
                     </li>
                   );
                 })}
               </ul>
             )}
           </div>
-
         </div>
       </div>
 
-      {/* 4. HISTORIAL DE MOVIMIENTOS (TIMELINE) */}
+      {/* HISTORIAL */}
       <div className="mt-10">
         <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-4">Historial de Movimientos</h2>
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8">
-          
-          {loadingMovements ? (
-            <p className="text-sm font-bold text-slate-400 uppercase tracking-widest animate-pulse">Cargando historial...</p>
-          ) : movements.length === 0 ? (
-            <p className="text-sm font-medium text-slate-500 border-2 border-dashed border-slate-200 rounded-xl p-8 text-center bg-slate-50">No hay movimientos registrados para este equipo.</p>
-          ) : (
-            <div className="space-y-6">
-              {movements.map((mov: any) => (
-                <div key={mov.id} className="relative pl-6 border-l-2 border-slate-100 last:border-l-transparent pb-2 last:pb-0 group">
-                  <div className="absolute w-4 h-4 bg-sky-500 rounded-full -left-[9px] top-1 border-[3px] border-white shadow-sm group-hover:bg-sky-600 transition-colors"></div>
-                  
-                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-2 gap-1">
-                    <span className="text-[11px] font-black text-sky-700 uppercase tracking-widest bg-sky-50 px-3 py-1 rounded w-fit">
-                      {translateMovement(mov.type)}
-                    </span>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase">
-                      {new Date(mov.createdAt).toLocaleString('es-CO')}
-                    </span>
-                  </div>
-
-                  <div 
-                    onClick={() => handleOpenMovement(mov)}
-                    className="bg-white border border-slate-200 p-4 rounded-xl text-sm text-slate-700 mt-2 shadow-sm hover:shadow-md hover:border-sky-300 transition-all cursor-pointer flex justify-between items-center"
-                  >
-                    <div className="space-y-1 w-full">
-                      {mov.type === 'ASSIGN' && <p>Entregado a: <span className="font-bold uppercase text-slate-900">{mov.toPerson?.fullName || '—'}</span></p>}
-                      {mov.type === 'RETURN' && <p>Recogido de: <span className="font-bold uppercase text-slate-900">{mov.fromPerson?.fullName || '—'}</span></p>}
-                      {mov.type === 'TRANSFER' && <p>Trasladado hacia <span className="font-bold uppercase text-slate-900">{mov.toLocation?.name || '—'}</span></p>}
-                      {mov.type === 'STOCK_IN' && <p>Ingresado a: <span className="font-bold uppercase text-slate-900">{mov.toLocation?.name || '—'}</span></p>}
-                      <p className="text-[10px] text-slate-400 font-bold uppercase mt-2">Registrado por: {mov.createdBy?.name || 'Sistema'}</p>
+          <div className="space-y-6">
+            {movements.map((mov: any) => (
+              <div key={mov.id} className="relative pl-6 border-l-2 border-slate-100 pb-2">
+                <div className="absolute w-4 h-4 bg-sky-500 rounded-full -left-[9px] top-1 border-[3px] border-white shadow-sm"></div>
+                <div onClick={() => { setSelectedMovement(mov); setPreviewFile(null); }} className="bg-white border border-slate-200 p-4 rounded-xl text-sm text-slate-700 mt-2 shadow-sm hover:shadow-md hover:border-sky-300 transition-all cursor-pointer flex justify-between items-center">
+                  <div className="space-y-1 w-full">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-[11px] font-black text-sky-700 uppercase bg-sky-50 px-3 py-1 rounded w-fit">{translateMovement(mov.type)}</span>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">{new Date(mov.createdAt).toLocaleString('es-CO')}</span>
                     </div>
-                    <div className="text-sky-500 font-bold text-[10px] uppercase tracking-widest whitespace-nowrap pl-4 hidden sm:block">
-                      Ver Detalles ↗
-                    </div>
+                    {mov.type === 'ASSIGN' && <p>Entregado a: <span className="font-bold uppercase text-slate-900">{mov.toPerson?.fullName || '—'}</span></p>}
+                    {mov.type === 'RETURN' && <p>Recogido de: <span className="font-bold uppercase text-slate-900">{mov.fromPerson?.fullName || '—'}</span></p>}
+                    <p className="text-[10px] text-slate-400 font-bold uppercase mt-2">Registrado por: {mov.createdBy?.name || 'Sistema'}</p>
                   </div>
+                  <div className="text-sky-500 font-bold text-[10px] uppercase tracking-widest pl-4 hidden sm:block">Ver Detalles ↗</div>
                 </div>
-              ))}
-            </div>
-          )}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* VISOR MODAL GIGANTE PARA LOS ANEXOS (FACTURAS / SOPORTES) */}
+      {/* ✅ VISOR ÚNICO DE PDF / IMÁGENES GIGANTE (USADO POR ANEXOS Y COMODATOS) */}
       {previewFile && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/90 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in">
           <div className="bg-slate-800 w-full max-w-5xl h-[95vh] rounded-2xl flex flex-col shadow-2xl overflow-hidden border border-slate-700">
@@ -433,14 +360,19 @@ export default function AssetDetailPage() {
                </a>
              </div>
 
-             <div className="flex-1 w-full h-full overflow-hidden p-2 sm:p-6 bg-slate-300 flex flex-col items-center justify-center">
+             <div className="flex-1 w-full h-full overflow-hidden p-2 sm:p-6 bg-slate-300 flex flex-col items-center justify-center relative">
+               {/* 🟡 CAJA AMARILLA DE DIAGNÓSTICO: Si el PDF no carga, haz clic en este enlace para ver el error del servidor */}
+               <div className="absolute top-2 inset-x-2 sm:top-4 sm:inset-x-4 bg-yellow-100 border border-yellow-400 text-yellow-800 text-[10px] rounded-lg p-2 shadow-md flex items-center justify-between z-10">
+                 <span className="truncate mr-2 font-medium">URL: <a href={previewFile.url} target="_blank" className="underline font-bold text-sky-700">{previewFile.url}</a></span>
+               </div>
+
                {previewFile.isImage ? (
-                  <img src={previewFile.url} alt={previewFile.name} className="max-w-full max-h-full object-contain rounded-xl shadow-2xl bg-white" />
+                  <img src={previewFile.url} alt={previewFile.name} className="max-w-full max-h-full object-contain rounded-xl shadow-2xl bg-white mt-10" />
                ) : (
                   <>
-                    <iframe src={`${previewFile.url}#view=FitH`} className="w-full flex-1 rounded-xl shadow-2xl bg-white border-0" title={previewFile.name} />
+                    <iframe src={`${previewFile.url}#view=FitH`} className="w-full flex-1 rounded-xl shadow-2xl bg-white border-0 mt-8" title={previewFile.name} />
                     <a href={previewFile.url} target="_blank" rel="noopener noreferrer" className="mt-3 sm:hidden w-full text-center bg-slate-900 text-white px-4 py-3 rounded-xl text-xs font-bold shadow-lg">
-                       ¿No puedes ver el PDF? Ábrelo en otra pestaña
+                       ¿Pantalla en blanco? Ábrelo en otra pestaña
                     </a>
                   </>
                )}
@@ -449,132 +381,96 @@ export default function AssetDetailPage() {
         </div>
       )}
 
-      {/* MODAL RESPONSIVO DUAL (DETALLES DEL HISTORIAL O VISOR DEL COMODATO) */}
-      {selectedMovement && (
+      {/* MODAL DE DETALLES DEL MOVIMIENTO (DONDE ESTÁ EL BOTÓN DEL COMODATO) */}
+      {selectedMovement && !previewFile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in">
-          <div className={`bg-white rounded-2xl w-full ${viewMode === 'PDF_VIEWER' ? 'max-w-5xl h-[95vh]' : 'max-w-2xl max-h-[95vh]'} flex flex-col shadow-2xl overflow-hidden transition-all duration-300`}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[95vh] flex flex-col shadow-2xl overflow-hidden transition-all duration-300">
             
-            {viewMode === 'DETAILS' ? (
-              <>
-                <div className="p-4 sm:p-5 border-b flex justify-between items-center bg-slate-50">
-                  <div>
-                    <h2 className="text-base sm:text-lg font-black text-slate-800 uppercase tracking-tight">Detalle del Movimiento</h2>
-                    <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 tracking-widest uppercase mt-1">Registrado el: {new Date(selectedMovement.createdAt).toLocaleString('es-CO')}</p>
-                  </div>
-                  <button onClick={() => setSelectedMovement(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300 font-bold">✕</button>
+            <div className="p-4 sm:p-5 border-b flex justify-between items-center bg-slate-50">
+              <div>
+                <h2 className="text-base sm:text-lg font-black text-slate-800 uppercase tracking-tight">Detalle del Movimiento</h2>
+                <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 tracking-widest uppercase mt-1">Registrado el: {new Date(selectedMovement.createdAt).toLocaleString('es-CO')}</p>
+              </div>
+              <button onClick={() => setSelectedMovement(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300 font-bold">✕</button>
+            </div>
+
+            <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4 sm:space-y-6">
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Tipo de Movimiento</p>
+                  <p className="text-sm font-black uppercase text-sky-700">{translateMovement(selectedMovement.type)}</p>
                 </div>
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Autor de Gestión</p>
+                  <p className="text-sm font-bold text-slate-700 uppercase truncate">{selectedMovement.createdBy?.name || 'Sistema'}</p>
+                </div>
+              </div>
 
-                <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4 sm:space-y-6">
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Tipo de Movimiento</p>
-                      <p className="text-sm font-black uppercase text-sky-700">{translateMovement(selectedMovement.type)}</p>
-                    </div>
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Autor de Gestión</p>
-                      <p className="text-sm font-bold text-slate-700 uppercase truncate">{selectedMovement.createdBy?.name || 'Sistema'}</p>
-                    </div>
-                  </div>
-
-                  <div className="border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
-                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-2">Información de Origen y Destino</h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Origen</p>
-                        {selectedMovement.fromPerson ? (
-                           <p className="font-bold text-slate-800 uppercase">{selectedMovement.fromPerson.fullName} <span className="block text-xs text-slate-500 mt-0.5">Doc: {selectedMovement.fromPerson.documentId || '—'}</span></p>
-                        ) : selectedMovement.fromLocation ? (
-                           <p className="font-bold text-slate-800 uppercase">{selectedMovement.fromLocation.name}</p>
-                        ) : (
-                           <p className="text-slate-400 uppercase font-medium text-xs">No aplica</p>
-                        )}
-                      </div>
-                      <div>
-                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Destino</p>
-                        {selectedMovement.toPerson ? (
-                           <p className="font-bold text-slate-800 uppercase">{selectedMovement.toPerson.fullName} <span className="block text-xs text-slate-500 mt-0.5">Doc: {selectedMovement.toPerson.documentId || '—'}</span></p>
-                        ) : selectedMovement.toLocation ? (
-                           <p className="font-bold text-slate-800 uppercase">{selectedMovement.toLocation.name}</p>
-                        ) : (
-                           <p className="text-slate-400 uppercase font-medium text-xs">No aplica</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4">
-                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-2">Soporte y Validación</h3>
-                    <div>
-                       <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Firma o Trazo de Conformidad</p>
-                       {selectedMovement.signatureData?.startsWith('data:image') ? (
-                         <img src={selectedMovement.signatureData} alt="Firma" className="h-20 border rounded bg-white p-2 object-contain shadow-sm" />
-                       ) : (
-                         <p className="text-[10px] font-bold italic text-slate-500 uppercase bg-white p-3 rounded border border-slate-200">{selectedMovement.signatureData || 'Sin firma registrada'}</p>
-                       )}
-                    </div>
-                    
-                    {displayNotes && (
-                      <div className="mt-4 pt-4 border-t border-slate-200">
-                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Notas Adicionales</p>
-                        <p className="text-xs text-slate-600 italic bg-white p-3 rounded border border-slate-200">{displayNotes}</p>
-                      </div>
-                    )}
-
-                    {/* BOTÓN PARA ABRIR VISOR DEL COMODATO ORIGINAL */}
-                    {pdfUrl && (
-                      <div className="mt-4 pt-4 border-t border-slate-200">
-                        <button 
-                          onClick={() => setViewMode('PDF_VIEWER')} 
-                          className="w-full flex items-center justify-center bg-indigo-50 border-2 border-indigo-200 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 transition-all font-black uppercase text-[11px] sm:text-xs tracking-widest py-4 rounded-xl shadow-sm gap-2"
-                        >
-                           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
-                          Ver PDF del Comodato Original
-                        </button>
-                      </div>
+              <div className="border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
+                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-2">Información de Origen y Destino</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Origen</p>
+                    {selectedMovement.fromPerson ? (
+                       <p className="font-bold text-slate-800 uppercase">{selectedMovement.fromPerson.fullName} <span className="block text-xs text-slate-500 mt-0.5">Doc: {selectedMovement.fromPerson.documentId || '—'}</span></p>
+                    ) : selectedMovement.fromLocation ? (
+                       <p className="font-bold text-slate-800 uppercase">{selectedMovement.fromLocation.name}</p>
+                    ) : (
+                       <p className="text-slate-400 uppercase font-medium text-xs">No aplica</p>
                     )}
                   </div>
+                  <div>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Destino</p>
+                    {selectedMovement.toPerson ? (
+                       <p className="font-bold text-slate-800 uppercase">{selectedMovement.toPerson.fullName} <span className="block text-xs text-slate-500 mt-0.5">Doc: {selectedMovement.toPerson.documentId || '—'}</span></p>
+                    ) : selectedMovement.toLocation ? (
+                       <p className="font-bold text-slate-800 uppercase">{selectedMovement.toLocation.name}</p>
+                    ) : (
+                       <p className="text-slate-400 uppercase font-medium text-xs">No aplica</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4">
+                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-2">Soporte y Validación</h3>
+                <div>
+                   <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Firma o Trazo de Conformidad</p>
+                   {selectedMovement.signatureData?.startsWith('data:image') ? (
+                     <img src={selectedMovement.signatureData} alt="Firma" className="h-20 border rounded bg-white p-2 object-contain shadow-sm" />
+                   ) : (
+                     <p className="text-[10px] font-bold italic text-slate-500 uppercase bg-white p-3 rounded border border-slate-200">{selectedMovement.signatureData || 'Sin firma registrada'}</p>
+                   )}
                 </div>
                 
-                <div className="p-4 border-t bg-slate-50 flex justify-end">
-                  <button onClick={() => setSelectedMovement(null)} className="w-full sm:w-auto px-6 py-3 sm:py-2 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg hover:bg-slate-800 transition-colors">
-                    Cerrar Detalles
-                  </button>
-                </div>
-              </>
-            ) : (
-              
-              /* VISOR DE PDF NATIVO DEL COMODATO */
-              <div className="flex-1 bg-slate-800 flex flex-col h-full overflow-hidden rounded-2xl border border-slate-700">
-                 <div className="p-3 sm:p-4 bg-slate-900 flex items-center justify-between shadow-md z-10 border-b border-slate-800">
-                   <button onClick={() => setViewMode('DETAILS')} className="text-[10px] font-bold text-white uppercase tracking-widest hover:text-sky-300 flex items-center gap-1 transition-colors bg-slate-800 px-3 py-2 rounded-lg border border-slate-700">
-                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
-                     Volver a Detalles
-                   </button>
-                   
-                   {pdfUrl && (
-                     <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 sm:px-5 sm:py-2.5 rounded-lg uppercase font-black tracking-widest transition-colors shadow-lg flex items-center gap-2">
-                       Descargar <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-                     </a>
-                   )}
-                 </div>
+                {displayNotes && (
+                  <div className="mt-4 pt-4 border-t border-slate-200">
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Notas Adicionales</p>
+                    <p className="text-xs text-slate-600 italic bg-white p-3 rounded border border-slate-200">{displayNotes}</p>
+                  </div>
+                )}
 
-                 <div className="flex-1 w-full h-full overflow-hidden bg-slate-300 p-2 sm:p-6 flex flex-col">
-                   {pdfUrl ? (
-                     <>
-                       <iframe src={`${pdfUrl}#view=FitH`} className="w-full flex-1 rounded-xl shadow-2xl bg-white border-0" title="Comodato PDF" />
-                       <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="mt-3 sm:hidden w-full text-center bg-slate-900 text-white px-4 py-3 rounded-xl text-xs font-bold shadow-lg">
-                          ¿No puedes ver el PDF? Ábrelo en otra pestaña
-                       </a>
-                     </>
-                   ) : (
-                     <div className="w-full h-full flex items-center justify-center text-slate-500 font-medium">
-                       <p>No se pudo cargar el archivo PDF.</p>
-                     </div>
-                   )}
-                 </div>
+                {/* ✅ BOTÓN QUE ENVÍA LA URL AL VISOR GIGANTE QUE SÍ FUNCIONA */}
+                {pdfUrl && (
+                  <div className="mt-4 pt-4 border-t border-slate-200">
+                    <button 
+                      onClick={() => setPreviewFile({ url: pdfUrl as string, name: 'Comodato_Original.pdf', isImage: false })} 
+                      className="w-full flex items-center justify-center bg-indigo-50 border-2 border-indigo-200 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 transition-all font-black uppercase text-[11px] sm:text-xs tracking-widest py-4 rounded-xl shadow-sm gap-2"
+                    >
+                       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      Ver PDF del Comodato Original
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
+            </div>
+            
+            <div className="p-4 border-t bg-slate-50 flex justify-end">
+              <button onClick={() => setSelectedMovement(null)} className="w-full sm:w-auto px-6 py-3 sm:py-2 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg hover:bg-slate-800 transition-colors">
+                Cerrar Detalles
+              </button>
+            </div>
             
           </div>
         </div>
