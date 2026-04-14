@@ -64,17 +64,20 @@ export default function AssetDetailPage() {
 
   const [mounted, setMounted] = useState(false);
   const [selectedMovement, setSelectedMovement] = useState<any | null>(null);
+  const [viewMode, setViewMode] = useState<'DETAILS' | 'PDF_VIEWER'>('DETAILS');
 
   const [file, setFile] = useState<File | null>(null);
   const [attType, setAttType] = useState<AttachmentType>('FACTURA_COMPRA');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null); 
-  
-  // ✅ VISOR ÚNICO: Maneja tanto Anexos como Comodatos
   const [previewFile, setPreviewFile] = useState<{ url: string, name: string, isImage: boolean } | null>(null);
 
-  // URL base segura para producción o desarrollo
-  const API_BASE = (process.env.NEXT_PUBLIC_API_URL || api.defaults.baseURL || 'http://localhost:4000').replace(/\/+$/, '');
+  // ✅ URL BASE A PRUEBA DE BALAS: Toma la IP real del dispositivo actual
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL 
+    ? process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '') 
+    : typeof window !== 'undefined' 
+      ? `${window.location.protocol}//${window.location.hostname}:4000` 
+      : 'http://localhost:4000';
 
   const listAttachmentsQ = useQuery({
     queryKey: ['asset-attachments', id],
@@ -108,14 +111,15 @@ export default function AssetDetailPage() {
 
   useEffect(() => { setMounted(true); }, []);
 
-  const handlePreviewAttachment = (att: Attachment) => {
-    let url = att.path;
-    if (url.startsWith('http')) {
-        try { url = new URL(url).pathname; } catch(e) {}
-    }
-    if (!url.startsWith('/')) url = '/' + url;
-    url = `${API_BASE}${url}`;
+  const handleOpenMovement = (mov: any) => { setSelectedMovement(mov); setViewMode('DETAILS'); };
 
+  const handlePreviewAttachment = (att: Attachment) => {
+    let cleanPath = att.path;
+    // Si la DB guardó un dominio extraño, nos quedamos solo con "/uploads/..."
+    const uIdx = cleanPath.indexOf('/uploads/');
+    if (uIdx !== -1) cleanPath = cleanPath.substring(uIdx);
+
+    const url = `${API_BASE}/${cleanPath.replace(/^\/+/, '')}`;
     const isImage = att.mime?.startsWith('image/') || url.toLowerCase().match(/\.(jpg|jpeg|png|gif|svg)$/) || false;
     setPreviewFile({ url, name: att.fileName, isImage: !!isImage });
   };
@@ -130,20 +134,18 @@ export default function AssetDetailPage() {
   const riskLevel = String(asset.riskLevel || '—');
   const maintFreq = String(asset.maintenanceFrequency || 'NO APLICA');
 
-  // ✅ EXTRACCIÓN SEGURA DEL COMODATO PARA ENVIAR AL VISOR
+  // ✅ EXTRACCIÓN BULLETPROOF DEL COMODATO (IGNORA LOCALHOST)
   let displayNotes = selectedMovement?.notes || '';
   let pdfUrl: string | null = null;
   if (displayNotes) {
     const pdfMatch = displayNotes.match(/\[PDF\]:(https?:\/\/[^\s]+|\/uploads[^\s]+)/);
     if (pdfMatch) {
-      let rawUrl = pdfMatch[1];
+      const rawUrl = pdfMatch[1];
       let cleanPath = rawUrl;
-      if (rawUrl.startsWith('http')) {
-          try { cleanPath = new URL(rawUrl).pathname; } catch(e) {}
-      }
-      if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
-      pdfUrl = `${API_BASE}${cleanPath}`;
-      
+      const uIdx = cleanPath.indexOf('/uploads/');
+      if (uIdx !== -1) cleanPath = cleanPath.substring(uIdx);
+
+      pdfUrl = `${API_BASE}/${cleanPath.replace(/^\/+/, '')}`;
       displayNotes = displayNotes.replace(pdfMatch[0], '').trim();
       displayNotes = displayNotes.replace(/^\|\s*/, '').replace(/\s*\|\s*$/, '').trim();
     }
@@ -265,18 +267,17 @@ export default function AssetDetailPage() {
               <ul className="space-y-3">
                 {attachments.map((att) => {
                   let downloadUrl = att.path;
-                  if (downloadUrl.startsWith('http')) {
-                      try { downloadUrl = new URL(downloadUrl).pathname; } catch(e) {}
-                  }
-                  if (!downloadUrl.startsWith('/')) downloadUrl = '/' + downloadUrl;
-                  downloadUrl = `${API_BASE}${downloadUrl}`;
+                  const uIdx = downloadUrl.indexOf('/uploads/');
+                  if (uIdx !== -1) downloadUrl = downloadUrl.substring(uIdx);
+                  downloadUrl = `${API_BASE}/${downloadUrl.replace(/^\/+/, '')}`;
 
                   const isDropdownOpen = openDropdown === att.id;
                   const isImg = att.mime?.startsWith('image/') || att.fileName.toLowerCase().match(/\.(jpg|jpeg|png|gif)$/);
 
                   return (
-                    <li key={att.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 sm:p-4 flex items-center justify-between gap-3 relative">
-                      <div onClick={() => handlePreviewAttachment(att)} className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer hover:opacity-80">
+                    <li key={att.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 sm:p-4 flex items-center justify-between gap-3 hover:shadow-sm transition-shadow relative">
+                      
+                      <div onClick={() => handlePreviewAttachment(att)} className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer hover:opacity-80 transition-opacity">
                          <div className={`w-10 h-10 shrink-0 rounded-lg flex items-center justify-center font-black ${isImg ? 'bg-sky-100 text-sky-700' : 'bg-rose-100 text-rose-700'}`}>
                            {isImg ? (
                              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
@@ -289,18 +290,19 @@ export default function AssetDetailPage() {
                            <p className="text-[10px] text-slate-500 font-medium truncate">{att.fileName}</p>
                          </div>
                       </div>
+
                       <div className="relative shrink-0">
-                        <button onClick={(e) => { e.stopPropagation(); setOpenDropdown(isDropdownOpen ? null : att.id); }} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-full">
+                        <button onClick={(e) => { e.stopPropagation(); setOpenDropdown(isDropdownOpen ? null : att.id); }} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-full transition-colors focus:outline-none">
                           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
                         </button>
                         {isDropdownOpen && <div className="fixed inset-0 z-30" onClick={() => setOpenDropdown(null)} />}
                         {isDropdownOpen && (
-                          <div className="absolute right-0 top-10 mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-xl z-40 py-1 overflow-hidden">
-                            <a href={downloadUrl} download={att.fileName} className="flex items-center gap-3 px-4 py-3 text-xs font-bold text-slate-700 hover:bg-slate-50">
+                          <div className="absolute right-0 top-10 mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-xl z-40 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                            <a href={downloadUrl} download={att.fileName} onClick={() => setOpenDropdown(null)} className="flex items-center gap-3 px-4 py-3 text-xs font-bold text-slate-700 hover:bg-slate-50 w-full text-left">
                               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-sky-600"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
                               Descargar Archivo
                             </a>
-                            <button onClick={() => { setOpenDropdown(null); if (confirm('¿Eliminar anexo?')) removeAttachment.mutate(att.id); }} className="w-full flex items-center gap-3 text-left px-4 py-3 text-xs font-bold text-rose-600 hover:bg-rose-50 border-t border-slate-100">
+                            <button onClick={() => { setOpenDropdown(null); if (confirm('¿Estás seguro de eliminar este documento anexo?')) removeAttachment.mutate(att.id); }} className="flex items-center gap-3 px-4 py-3 text-xs font-bold text-rose-600 hover:bg-rose-50 border-t border-slate-100 w-full text-left">
                               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
                               Eliminar Anexo
                             </button>
@@ -316,29 +318,49 @@ export default function AssetDetailPage() {
         </div>
       </div>
 
-      {/* HISTORIAL */}
+      {/* HISTORIAL DE MOVIMIENTOS */}
       <div className="mt-10">
         <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-4">Historial de Movimientos</h2>
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8">
-          <div className="space-y-6">
-            {movements.map((mov: any) => (
-              <div key={mov.id} className="relative pl-6 border-l-2 border-slate-100 pb-2">
-                <div className="absolute w-4 h-4 bg-sky-500 rounded-full -left-[9px] top-1 border-[3px] border-white shadow-sm"></div>
-                <div onClick={() => { setSelectedMovement(mov); setPreviewFile(null); }} className="bg-white border border-slate-200 p-4 rounded-xl text-sm text-slate-700 mt-2 shadow-sm hover:shadow-md hover:border-sky-300 transition-all cursor-pointer flex justify-between items-center">
-                  <div className="space-y-1 w-full">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-[11px] font-black text-sky-700 uppercase bg-sky-50 px-3 py-1 rounded w-fit">{translateMovement(mov.type)}</span>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase">{new Date(mov.createdAt).toLocaleString('es-CO')}</span>
-                    </div>
-                    {mov.type === 'ASSIGN' && <p>Entregado a: <span className="font-bold uppercase text-slate-900">{mov.toPerson?.fullName || '—'}</span></p>}
-                    {mov.type === 'RETURN' && <p>Recogido de: <span className="font-bold uppercase text-slate-900">{mov.fromPerson?.fullName || '—'}</span></p>}
-                    <p className="text-[10px] text-slate-400 font-bold uppercase mt-2">Registrado por: {mov.createdBy?.name || 'Sistema'}</p>
+          
+          {loadingMovements ? (
+            <p className="text-sm font-bold text-slate-400 uppercase tracking-widest animate-pulse">Cargando historial...</p>
+          ) : movements.length === 0 ? (
+            <p className="text-sm font-medium text-slate-500 border-2 border-dashed border-slate-200 rounded-xl p-8 text-center bg-slate-50">No hay movimientos registrados para este equipo.</p>
+          ) : (
+            <div className="space-y-6">
+              {movements.map((mov: any) => (
+                <div key={mov.id} className="relative pl-6 border-l-2 border-slate-100 last:border-l-transparent pb-2 last:pb-0 group">
+                  <div className="absolute w-4 h-4 bg-sky-500 rounded-full -left-[9px] top-1 border-[3px] border-white shadow-sm group-hover:bg-sky-600 transition-colors"></div>
+                  
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-2 gap-1">
+                    <span className="text-[11px] font-black text-sky-700 uppercase tracking-widest bg-sky-50 px-3 py-1 rounded w-fit">
+                      {translateMovement(mov.type)}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">
+                      {new Date(mov.createdAt).toLocaleString('es-CO')}
+                    </span>
                   </div>
-                  <div className="text-sky-500 font-bold text-[10px] uppercase tracking-widest pl-4 hidden sm:block">Ver Detalles ↗</div>
+
+                  <div 
+                    onClick={() => handleOpenMovement(mov)}
+                    className="bg-white border border-slate-200 p-4 rounded-xl text-sm text-slate-700 mt-2 shadow-sm hover:shadow-md hover:border-sky-300 transition-all cursor-pointer flex justify-between items-center"
+                  >
+                    <div className="space-y-1 w-full">
+                      {mov.type === 'ASSIGN' && <p>Entregado a: <span className="font-bold uppercase text-slate-900">{mov.toPerson?.fullName || '—'}</span></p>}
+                      {mov.type === 'RETURN' && <p>Recogido de: <span className="font-bold uppercase text-slate-900">{mov.fromPerson?.fullName || '—'}</span></p>}
+                      {mov.type === 'TRANSFER' && <p>Trasladado hacia <span className="font-bold uppercase text-slate-900">{mov.toLocation?.name || '—'}</span></p>}
+                      {mov.type === 'STOCK_IN' && <p>Ingresado a: <span className="font-bold uppercase text-slate-900">{mov.toLocation?.name || '—'}</span></p>}
+                      <p className="text-[10px] text-slate-400 font-bold uppercase mt-2">Registrado por: {mov.createdBy?.name || 'Sistema'}</p>
+                    </div>
+                    <div className="text-sky-500 font-bold text-[10px] uppercase tracking-widest whitespace-nowrap pl-4 hidden sm:block">
+                      Ver Detalles ↗
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -361,19 +383,31 @@ export default function AssetDetailPage() {
              </div>
 
              <div className="flex-1 w-full h-full overflow-hidden p-2 sm:p-6 bg-slate-300 flex flex-col items-center justify-center relative">
-               {/* 🟡 CAJA AMARILLA DE DIAGNÓSTICO: Si el PDF no carga, haz clic en este enlace para ver el error del servidor */}
-               <div className="absolute top-2 inset-x-2 sm:top-4 sm:inset-x-4 bg-yellow-100 border border-yellow-400 text-yellow-800 text-[10px] rounded-lg p-2 shadow-md flex items-center justify-between z-10">
-                 <span className="truncate mr-2 font-medium">URL: <a href={previewFile.url} target="_blank" className="underline font-bold text-sky-700">{previewFile.url}</a></span>
+               
+               {/* 🟡 CAJA AMARILLA DE DIAGNÓSTICO DE URL */}
+               <div className="absolute top-2 inset-x-2 sm:top-4 sm:inset-x-4 bg-yellow-100 border border-yellow-400 text-yellow-800 text-[10px] rounded-lg p-2 shadow-md z-10 truncate">
+                 <span className="font-medium mr-2">URL Abierta:</span> 
+                 <a href={previewFile.url} target="_blank" className="underline font-bold">{previewFile.url}</a>
                </div>
 
                {previewFile.isImage ? (
                   <img src={previewFile.url} alt={previewFile.name} className="max-w-full max-h-full object-contain rounded-xl shadow-2xl bg-white mt-10" />
                ) : (
                   <>
-                    <iframe src={`${previewFile.url}#view=FitH`} className="w-full flex-1 rounded-xl shadow-2xl bg-white border-0 mt-8" title={previewFile.name} />
-                    <a href={previewFile.url} target="_blank" rel="noopener noreferrer" className="mt-3 sm:hidden w-full text-center bg-slate-900 text-white px-4 py-3 rounded-xl text-xs font-bold shadow-lg">
-                       ¿Pantalla en blanco? Ábrelo en otra pestaña
-                    </a>
+                    {/* VISOR DE PDF NATIVO PARA PC */}
+                    <iframe src={`${previewFile.url}#view=FitH`} className="hidden sm:block w-full flex-1 rounded-xl shadow-2xl bg-white border-0 mt-8" title={previewFile.name} />
+                    
+                    {/* VISOR DE RESPALDO PARA CELULAR (Soluciona el bloqueo) */}
+                    <div className="sm:hidden w-full flex-1 flex flex-col items-center justify-center bg-white rounded-xl shadow-2xl mt-8 p-6 text-center border-2 border-dashed border-slate-300">
+                       <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mb-4">
+                         <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                       </div>
+                       <h3 className="text-base font-black text-slate-800 mb-2 uppercase">Documento PDF</h3>
+                       <p className="text-slate-500 text-xs mb-6">Tu celular no permite visualizar el archivo aquí. Ábrelo en otra pestaña para poder leerlo.</p>
+                       <a href={previewFile.url} target="_blank" rel="noopener noreferrer" className="w-full bg-sky-600 text-white px-4 py-4 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg">
+                          Abrir Documento Original ↗
+                       </a>
+                    </div>
                   </>
                )}
              </div>
@@ -451,7 +485,7 @@ export default function AssetDetailPage() {
                   </div>
                 )}
 
-                {/* ✅ BOTÓN QUE ENVÍA LA URL AL VISOR GIGANTE QUE SÍ FUNCIONA */}
+                {/* ✅ BOTÓN QUE ENVÍA LA URL AL VISOR GIGANTE */}
                 {pdfUrl && (
                   <div className="mt-4 pt-4 border-t border-slate-200">
                     <button 
