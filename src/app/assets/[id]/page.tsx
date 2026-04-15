@@ -72,15 +72,33 @@ export default function AssetDetailPage() {
   const [previewFile, setPreviewFile] = useState<{ url: string, name: string, isImage: boolean } | null>(null);
 
   // ✅ URL BASE DEFINITIVA E INFALIBLE
-  let rawApiBase = 'https://stockit-uyvn.onrender.com'; // Forzamos producción por defecto
-  
+  let rawApiBase = 'https://stockit-uyvn.onrender.com';
   if (process.env.NEXT_PUBLIC_API_URL) {
     rawApiBase = process.env.NEXT_PUBLIC_API_URL;
   } else if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
-    rawApiBase = 'http://localhost:4000'; // Solo si estás en tu PC local programando
+    rawApiBase = 'http://localhost:4000'; 
   }
-  
   const API_BASE = rawApiBase.replace(/\/+$/, '');
+
+  // ✅ CONSULTA DE DETECTIVE: Busca la factura/soporte manual en la tabla Handover
+  const handoverQuery = useQuery({
+    queryKey: ['handover-details', selectedMovement?.reference, selectedMovement?.notes],
+    queryFn: async () => {
+      let hId = null;
+      if (selectedMovement?.reference?.startsWith('H:')) {
+        hId = selectedMovement.reference.replace('H:', '').trim();
+      } else if (selectedMovement?.notes?.match(/Generada desde Entregas y Recogidas ([a-zA-Z0-9_-]+)/i)) {
+        const match = selectedMovement.notes.match(/Generada desde Entregas y Recogidas ([a-zA-Z0-9_-]+)/i);
+        if (match) hId = match[1].trim();
+      }
+      if (!hId) return null;
+      try {
+        const res = await api.get(`/api/handover/${hId}`);
+        return res.data;
+      } catch (e) { return null; }
+    },
+    enabled: !!selectedMovement,
+  });
 
   const listAttachmentsQ = useQuery({
     queryKey: ['asset-attachments', id],
@@ -118,6 +136,9 @@ export default function AssetDetailPage() {
 
   const handlePreviewAttachment = (att: Attachment) => {
     let cleanPath = att.path;
+    if (cleanPath.startsWith('http')) {
+      try { cleanPath = new URL(cleanPath).pathname; } catch(e) {}
+    }
     const uIdx = cleanPath.indexOf('/uploads/');
     if (uIdx !== -1) cleanPath = cleanPath.substring(uIdx);
 
@@ -136,36 +157,53 @@ export default function AssetDetailPage() {
   const riskLevel = String(asset.riskLevel || '—');
   const maintFreq = String(asset.maintenanceFrequency || 'NO APLICA');
 
-  // ✅ EXTRACCIÓN INFALIBLE DEL COMODATO Y FACTURAS
+  // ✅ EXTRACCIÓN DE DOCUMENTOS (COMODATO Y SOPORTE ADICIONAL)
   let displayNotes = selectedMovement?.notes || '';
   let pdfUrl: string | null = null;
+  let soporteManualUrl: string | null = null;
+  let soporteManualName = 'Soporte_Adicional';
 
-  // 1. Buscamos el enlace explícito [PDF]: que inyecta el sistema nuevo
-  const explicitPdfMatch = displayNotes.match(/\[PDF\]:\s*(.+?\.pdf)/i) || 
-                           displayNotes.match(/\[PDF\]:\s*(\/uploads[^\s]+)/i) || 
-                           displayNotes.match(/\[PDF\]:(https?:\/\/[^\s]+|\/uploads[^\s]+)/i);
+  if (selectedMovement) {
+    // 1. Buscamos el Comodato [PDF]:
+    const explicitPdfMatch = displayNotes.match(/\[PDF\]:\s*(.+?\.pdf)/i) || 
+                             displayNotes.match(/\[PDF\]:\s*(\/uploads[^\s]+)/i) || 
+                             displayNotes.match(/\[PDF\]:(https?:\/\/[^\s]+|\/uploads[^\s]+)/i);
 
-  if (explicitPdfMatch) {
-    const rawUrl = explicitPdfMatch[1];
-    let cleanPath = rawUrl;
-    const uIdx = cleanPath.indexOf('/uploads/');
-    if (uIdx !== -1) cleanPath = cleanPath.substring(uIdx);
+    if (explicitPdfMatch) {
+      let cleanPath = explicitPdfMatch[1];
+      if (cleanPath.startsWith('http')) {
+        try { cleanPath = new URL(cleanPath).pathname; } catch(e) {}
+      }
+      const uIdx = cleanPath.indexOf('/uploads/');
+      if (uIdx !== -1) cleanPath = cleanPath.substring(uIdx);
 
-    pdfUrl = `${API_BASE}/${cleanPath.replace(/^\/+/, '')}`;
-    
-    // Limpiamos la nota para que no se vea el link feo en pantalla
-    displayNotes = displayNotes.replace(explicitPdfMatch[0], '').trim();
-    displayNotes = displayNotes.replace(/^\|\s*/, '').replace(/\s*\|\s*$/, '').trim();
-  } 
-  // 2. Si no hay link, pero es una entrega manual vieja (H:id), deducimos la ruta
-  else if (selectedMovement?.reference?.startsWith('H:')) {
-    const handoverId = selectedMovement.reference.replace('H:', '').trim();
-    pdfUrl = `${API_BASE}/uploads/handovers/Comodato_${handoverId}.pdf`;
+      pdfUrl = `${API_BASE}/${cleanPath.replace(/^\/+/, '')}`;
+      displayNotes = displayNotes.replace(explicitPdfMatch[0], '').trim();
+      displayNotes = displayNotes.replace(/^\|\s*/, '').replace(/\s*\|\s*$/, '').trim();
+    } else if (selectedMovement?.reference?.startsWith('H:')) {
+      const handoverId = selectedMovement.reference.replace('H:', '').trim();
+      pdfUrl = `${API_BASE}/uploads/handovers/Comodato_${handoverId}.pdf`;
+    }
+
+    // 2. Buscamos el Soporte Manual (Consultado desde Handover)
+    if (handoverQuery.data?.attachmentPath) {
+      let hPath = handoverQuery.data.attachmentPath;
+      
+      // Solo lo mostramos si NO es el Comodato sobreescrito
+      if (!hPath.includes('Comodato_')) {
+        if (hPath.startsWith('http')) {
+          try { hPath = new URL(hPath).pathname; } catch(e) {}
+        }
+        const uIdx = hPath.indexOf('/uploads/');
+        if (uIdx !== -1) hPath = hPath.substring(uIdx);
+        
+        soporteManualUrl = `${API_BASE}/${hPath.replace(/^\/+/, '')}`;
+        soporteManualName = handoverQuery.data.attachmentName || 'Soporte_Manual';
+      }
+    }
   }
 
-  // Verificamos si es una ruta antigua para poder avisarle al usuario
-  const isOldRoute = !pdfUrl && selectedMovement?.reference?.startsWith('ROUTE:');
-
+  const isOldRoute = !pdfUrl && !soporteManualUrl && selectedMovement?.reference?.startsWith('ROUTE:');
   const attachments = listAttachmentsQ.data?.items || [];
 
   return (
@@ -251,7 +289,7 @@ export default function AssetDetailPage() {
         </div>
       </div>
 
-      {/* ANEXOS */}
+      {/* ANEXOS DEL EQUIPO */}
       <div className="mt-10">
         <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-4">Documentos y Anexos</h2>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
@@ -282,6 +320,9 @@ export default function AssetDetailPage() {
               <ul className="space-y-3">
                 {attachments.map((att) => {
                   let downloadUrl = att.path;
+                  if (downloadUrl.startsWith('http')) {
+                    try { downloadUrl = new URL(downloadUrl).pathname; } catch(e) {}
+                  }
                   const uIdx = downloadUrl.indexOf('/uploads/');
                   if (uIdx !== -1) downloadUrl = downloadUrl.substring(uIdx);
                   downloadUrl = `${API_BASE}/${downloadUrl.replace(/^\/+/, '')}`;
@@ -379,7 +420,7 @@ export default function AssetDetailPage() {
         </div>
       </div>
 
-      {/* ✅ VISOR ÚNICO DE PDF / IMÁGENES GIGANTE (USADO POR ANEXOS Y COMODATOS) */}
+      {/* ✅ VISOR ÚNICO DE PDF / IMÁGENES GIGANTE (SIN CAJA AMARILLA) */}
       {previewFile && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/90 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in">
           <div className="bg-slate-800 w-full max-w-5xl h-[95vh] rounded-2xl flex flex-col shadow-2xl overflow-hidden border border-slate-700">
@@ -399,18 +440,13 @@ export default function AssetDetailPage() {
 
              <div className="flex-1 w-full h-full overflow-hidden p-2 sm:p-6 bg-slate-300 flex flex-col items-center justify-center relative">
                
-               <div className="absolute top-2 inset-x-2 sm:top-4 sm:inset-x-4 bg-yellow-100 border border-yellow-400 text-yellow-800 text-[10px] rounded-lg p-2 shadow-md z-10 truncate">
-                 <span className="font-medium mr-2">URL Abierta:</span> 
-                 <a href={previewFile.url} target="_blank" className="underline font-bold">{previewFile.url}</a>
-               </div>
-
                {previewFile.isImage ? (
-                  <img src={previewFile.url} alt={previewFile.name} className="max-w-full max-h-full object-contain rounded-xl shadow-2xl bg-white mt-10" />
+                  <img src={previewFile.url} alt={previewFile.name} className="max-w-full max-h-full object-contain rounded-xl shadow-2xl bg-white" />
                ) : (
                   <>
-                    <iframe src={`${previewFile.url}#view=FitH`} className="hidden sm:block w-full flex-1 rounded-xl shadow-2xl bg-white border-0 mt-8" title={previewFile.name} />
+                    <iframe src={`${previewFile.url}#view=FitH`} className="hidden sm:block w-full h-full rounded-xl shadow-2xl bg-white border-0" title={previewFile.name} />
                     
-                    <div className="sm:hidden w-full flex-1 flex flex-col items-center justify-center bg-white rounded-xl shadow-2xl mt-8 p-6 text-center border-2 border-dashed border-slate-300">
+                    <div className="sm:hidden w-full flex-1 flex flex-col items-center justify-center bg-white rounded-xl shadow-2xl p-6 text-center border-2 border-dashed border-slate-300">
                        <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mb-4">
                          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
                        </div>
@@ -427,7 +463,7 @@ export default function AssetDetailPage() {
         </div>
       )}
 
-      {/* MODAL DE DETALLES DEL MOVIMIENTO */}
+      {/* MODAL DE DETALLES DEL MOVIMIENTO (DONDE ESTÁN LOS BOTONES) */}
       {selectedMovement && !previewFile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in">
           <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[95vh] flex flex-col shadow-2xl overflow-hidden transition-all duration-300">
@@ -497,22 +533,39 @@ export default function AssetDetailPage() {
                   </div>
                 )}
 
-                {/* ✅ BOTÓN QUE ENVÍA LA URL AL VISOR GIGANTE QUE SÍ FUNCIONA */}
-                {pdfUrl && (
-                  <div className="mt-4 pt-4 border-t border-slate-200">
-                    <button 
-                      onClick={() => setPreviewFile({ url: pdfUrl as string, name: 'Comodato_Original.pdf', isImage: false })} 
-                      className="w-full flex items-center justify-center bg-indigo-50 border-2 border-indigo-200 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 transition-all font-black uppercase text-[11px] sm:text-xs tracking-widest py-4 rounded-xl shadow-sm gap-2"
-                    >
-                       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
-                      Ver PDF del Comodato Original
-                    </button>
+                {/* ✅ BOTONES DE DOCUMENTOS (COMODATO Y FACTURA MANUAL) */}
+                {(pdfUrl || soporteManualUrl) && (
+                  <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    
+                    {pdfUrl && (
+                      <button 
+                        onClick={() => setPreviewFile({ url: pdfUrl as string, name: 'Comodato_Original.pdf', isImage: false })} 
+                        className={`w-full flex items-center justify-center bg-indigo-50 border-2 border-indigo-200 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 transition-all font-black uppercase text-[11px] sm:text-xs tracking-widest py-3 rounded-xl shadow-sm gap-2 ${!soporteManualUrl ? 'sm:col-span-2' : ''}`}
+                      >
+                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        Ver Comodato
+                      </button>
+                    )}
+
+                    {soporteManualUrl && (
+                      <button 
+                        onClick={() => {
+                          const isImg = (soporteManualUrl as string).toLowerCase().match(/\.(jpg|jpeg|png|gif|svg)$/);
+                          setPreviewFile({ url: soporteManualUrl as string, name: soporteManualName, isImage: !!isImg });
+                        }} 
+                        className={`w-full flex items-center justify-center bg-emerald-50 border-2 border-emerald-200 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300 transition-all font-black uppercase text-[11px] sm:text-xs tracking-widest py-3 rounded-xl shadow-sm gap-2 ${!pdfUrl ? 'sm:col-span-2' : ''}`}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                        Soporte Adicional
+                      </button>
+                    )}
+
                   </div>
                 )}
-
+                
                 {isOldRoute && (
                   <div className="mt-4 pt-4 border-t border-slate-200">
-                     <p className="text-[10px] text-slate-500 font-medium italic text-center p-3 bg-slate-100 rounded-lg">El comodato de esta ruta antigua no está enlazado directamente. Para nuevas entregas aparecerá aquí el botón.</p>
+                     <p className="text-[10px] text-slate-500 font-medium italic text-center p-3 bg-slate-100 rounded-lg">El comodato de esta ruta antigua no está enlazado directamente.</p>
                   </div>
                 )}
               </div>
