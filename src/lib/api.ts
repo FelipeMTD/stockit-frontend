@@ -117,7 +117,7 @@ api.interceptors.response.use(
   async (error: AxiosError) => {
     const status = error.response?.status;
 
-    if (status === 401 || status === 403) {
+    if ( status === 403) {
       // Token inválido/expirado o sin permisos → fuera
       redirectToLogin();
     }
