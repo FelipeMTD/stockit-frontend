@@ -38,38 +38,35 @@ function initialsFrom(name?: string | null, email?: string | null) {
 function getNavLinksForRole(role?: string | null) {
   const r = (role || '').toUpperCase();
 
-  // Solo Rutas para CONDUCTOR
   if (r === 'CONDUCTOR') {
     return ALL_LINKS.filter((l) => l.href === '/routes');
   }
 
-  // INVENTARIO → activos, entregas/recogidas, rutas, población (SIN REPORTES NI SETTINGS)
+  // ✅ INVENTARIO: Ve Reportes, pero NO Configuraciones
   if (r === 'INVENTARIO') {
     return ALL_LINKS.filter((l) =>
-      ['/assets', '/entregas', '/routes', '/people'].includes(
-        l.href,
-      ),
+      ['/assets', '/entregas', '/routes', '/people', '/reportes'].includes(l.href),
     );
   }
 
-  // ADMINISTRATIVO → inventario (SIN REPORTES NI SETTINGS)
+  // ✅ ADMINISTRATIVO: Ve Reportes, pero NO Configuraciones
   if (r === 'ADMINISTRATIVO') {
     return ALL_LINKS.filter((l) =>
-      ['/assets'].includes(l.href),
+      ['/assets', '/reportes'].includes(l.href),
     );
   }
 
-  // VIEWER → inventario (SIN REPORTES NI SETTINGS)
   if (r === 'VIEWER') {
      return ALL_LINKS.filter((l) =>
       ['/assets'].includes(l.href),
     );
   }
 
-  // SUPER_ADMIN y ACTIVOS_FIJOS: Ven todo el menú
+  // SUPER_ADMIN y ACTIVOS_FIJOS: Ven TODO el menú
   return ALL_LINKS;
 }
 
+// ✅ AQUÍ ESTABA EL ERROR: Faltaba el "export default" antes de function AppShell
 export default function AppShell({ children }: PropsWithChildren) {
   const pathname = usePathname();
   const router = useRouter();
@@ -80,7 +77,6 @@ export default function AppShell({ children }: PropsWithChildren) {
 
   const isLogin = pathname === '/login';
 
-  // Proteger rutas
   useEffect(() => {
     if (isLogin) {
       setLoadingUser(false);
@@ -113,12 +109,14 @@ export default function AppShell({ children }: PropsWithChildren) {
           const isAllowed = allowed.some((base) => pathname === base || pathname.startsWith(base + '/'));
           if (!isAllowed) router.replace('/routes');
         } else if (roleUpper === 'INVENTARIO') {
-          // ✅ CORREGIDO: Ya no está '/reportes'
-          const allowed = ['/assets', '/entregas', '/routes', '/people'];
+          const allowed = ['/assets', '/entregas', '/routes', '/people', '/reportes'];
           const isAllowed = allowed.some((base) => pathname === base || pathname.startsWith(base + '/'));
           if (!isAllowed) router.replace('/assets');
-        } else if (roleUpper === 'ADMINISTRATIVO' || roleUpper === 'VIEWER') {
-          // ✅ CORREGIDO: Ya no está '/reportes'
+        } else if (roleUpper === 'ADMINISTRATIVO') {
+          const allowed = ['/assets', '/reportes'];
+          const isAllowed = allowed.some((base) => pathname === base || pathname.startsWith(base + '/'));
+          if (!isAllowed) router.replace('/assets');
+        } else if (roleUpper === 'VIEWER') {
           const allowed = ['/assets'];
           const isAllowed = allowed.some((base) => pathname === base || pathname.startsWith(base + '/'));
           if (!isAllowed) router.replace('/assets');
