@@ -71,7 +71,7 @@ export default function AssetDetailPage() {
   const [openDropdown, setOpenDropdown] = useState<string | null>(null); 
   const [previewFile, setPreviewFile] = useState<{ url: string, name: string, isImage: boolean } | null>(null);
   
-  // ✅ OBTENER EL ROL DEL USUARIO
+  // ✅ ESTADO PARA EL ROL DEL USUARIO
   const [userRole, setUserRole] = useState<string | null>(null);
 
   const isLocal = typeof window !== 'undefined' && window.location.hostname === 'localhost';
@@ -157,7 +157,6 @@ export default function AssetDetailPage() {
     onError: (e: any) => toast.error(e?.response?.data?.error ?? e?.message ?? 'Error al eliminar'),
   });
 
-  // ✅ MUTACIÓN PARA ELIMINAR EL ACTIVO COMPLETO
   const deleteAssetMutation = useMutation({
     mutationFn: async () => await api.delete(`/api/assets/${id}`),
     onSuccess: () => {
@@ -171,6 +170,7 @@ export default function AssetDetailPage() {
 
   useEffect(() => { 
     setMounted(true); 
+    // Obtenemos el rol del LocalStorage (asignado en el login)
     setUserRole(localStorage.getItem('user_role'));
   }, []);
 
@@ -227,8 +227,13 @@ export default function AssetDetailPage() {
   const isOldRoute = !pdfUrl && !soporteManualUrl && selectedMovement?.reference?.startsWith('ROUTE:');
   const attachments = listAttachmentsQ.data?.items || [];
   
-  // ✅ VALIDACIÓN DE ROL PARA MOSTRAR BOTÓN ELIMINAR
-  const canDelete = userRole === 'ADMIN' || userRole === 'ACTIVOS_FIJOS';
+  // ✅ VALIDACIÓN DE ROL CORRECTA: Basado en el schema.prisma y lib/permissions.ts
+  const safeRole = String(userRole || '').toUpperCase().trim();
+  const canDelete = 
+    safeRole === 'SUPER_ADMIN' || 
+    safeRole === 'SUPER ADMIN' || 
+    safeRole === 'ACTIVOS_FIJOS' || 
+    safeRole === 'ACTIVOS FIJOS';
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 font-poppins text-slate-900 pb-20 pt-4 px-4 relative">
@@ -251,7 +256,7 @@ export default function AssetDetailPage() {
         <div className="flex flex-col items-end gap-3">
           <span className="px-4 py-1.5 rounded-full text-[10px] font-black uppercase shadow-sm border bg-slate-100 text-slate-700 border-slate-300">{status.replace('_', ' ')}</span>
           <div className="flex gap-2">
-            {/* ✅ BOTÓN DE ELIMINAR RESTAURADO Y VALIDADO */}
+            {/* ✅ BOTÓN DE ELIMINAR VALIDADO POR LOS ROLES CORRECTOS */}
             {canDelete && (
               <button 
                 onClick={handleDeleteAsset} 
