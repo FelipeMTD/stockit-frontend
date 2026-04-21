@@ -70,6 +70,9 @@ export default function AssetDetailPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null); 
   const [previewFile, setPreviewFile] = useState<{ url: string, name: string, isImage: boolean } | null>(null);
+  
+  // ✅ OBTENER EL ROL DEL USUARIO
+  const [userRole, setUserRole] = useState<string | null>(null);
 
   const isLocal = typeof window !== 'undefined' && window.location.hostname === 'localhost';
   const API_BASE = isLocal ? 'http://localhost:4000' : 'https://stockit-uyvn.onrender.com';
@@ -154,7 +157,22 @@ export default function AssetDetailPage() {
     onError: (e: any) => toast.error(e?.response?.data?.error ?? e?.message ?? 'Error al eliminar'),
   });
 
-  useEffect(() => { setMounted(true); }, []);
+  // ✅ MUTACIÓN PARA ELIMINAR EL ACTIVO COMPLETO
+  const deleteAssetMutation = useMutation({
+    mutationFn: async () => await api.delete(`/api/assets/${id}`),
+    onSuccess: () => {
+      toast.success('Activo eliminado exitosamente');
+      router.push('/assets');
+    },
+    onError: (e: any) => {
+      toast.error(e?.response?.data?.error ?? 'Error al eliminar el activo. Es posible que tenga movimientos asociados.');
+    },
+  });
+
+  useEffect(() => { 
+    setMounted(true); 
+    setUserRole(localStorage.getItem('user_role'));
+  }, []);
 
   const handleOpenMovement = (mov: any) => { setSelectedMovement(mov); };
 
@@ -162,6 +180,12 @@ export default function AssetDetailPage() {
     const url = getSecureUrl(rawPath);
     const isImage = !!url.split('?')[0].toLowerCase().match(/\.(jpg|jpeg|png|gif|svg|webp)$/);
     setPreviewFile({ url, name, isImage });
+  };
+
+  const handleDeleteAsset = () => {
+    if (confirm(`¿Estás completamente seguro de que deseas ELIMINAR el activo ${asset?.tag}? Esta acción no se puede deshacer.`)) {
+      deleteAssetMutation.mutate();
+    }
   };
 
   if (!mounted) return <div className="p-8 text-center text-slate-500 font-medium">Iniciando...</div>;
@@ -202,6 +226,9 @@ export default function AssetDetailPage() {
 
   const isOldRoute = !pdfUrl && !soporteManualUrl && selectedMovement?.reference?.startsWith('ROUTE:');
   const attachments = listAttachmentsQ.data?.items || [];
+  
+  // ✅ VALIDACIÓN DE ROL PARA MOSTRAR BOTÓN ELIMINAR
+  const canDelete = userRole === 'ADMIN' || userRole === 'ACTIVOS_FIJOS';
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 font-poppins text-slate-900 pb-20 pt-4 px-4 relative">
@@ -212,7 +239,9 @@ export default function AssetDetailPage() {
           {asset.photoUrl ? (
             <img src={asset.photoUrl} alt="Equipo" className="w-16 h-16 rounded-lg object-cover border shadow-sm" />
           ) : (
-            <div className="w-16 h-16 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-400"></div>
+            <div className="w-16 h-16 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-400">
+              <svg className="w-6 h-6 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+            </div>
           )}
           <div>
             <h1 className="text-2xl font-black tracking-tight text-slate-800 uppercase">{asset.tag || 'SIN TAG'}</h1>
@@ -221,7 +250,21 @@ export default function AssetDetailPage() {
         </div>
         <div className="flex flex-col items-end gap-3">
           <span className="px-4 py-1.5 rounded-full text-[10px] font-black uppercase shadow-sm border bg-slate-100 text-slate-700 border-slate-300">{status.replace('_', ' ')}</span>
-          <button onClick={() => router.push(`/assets/${id}/edit`)} className="bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-bold px-5 py-2 rounded-lg uppercase tracking-widest shadow-sm">Editar Equipo</button>
+          <div className="flex gap-2">
+            {/* ✅ BOTÓN DE ELIMINAR RESTAURADO Y VALIDADO */}
+            {canDelete && (
+              <button 
+                onClick={handleDeleteAsset} 
+                disabled={deleteAssetMutation.isPending}
+                className="bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 hover:border-rose-300 text-[10px] font-bold px-4 py-2 rounded-lg uppercase tracking-widest shadow-sm transition-colors"
+              >
+                {deleteAssetMutation.isPending ? '...' : 'Eliminar'}
+              </button>
+            )}
+            <button onClick={() => router.push(`/assets/${id}/edit`)} className="bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-bold px-5 py-2 rounded-lg uppercase tracking-widest shadow-sm transition-colors">
+              Editar Equipo
+            </button>
+          </div>
         </div>
       </div>
 
@@ -316,6 +359,9 @@ export default function AssetDetailPage() {
               <ul className="space-y-3">
                 {attachments.map((att) => {
                   let downloadUrl = att.path;
+                  if (downloadUrl.startsWith('http')) {
+                    try { downloadUrl = new URL(downloadUrl).pathname; } catch(e) {}
+                  }
                   const uIdx = downloadUrl.indexOf('/uploads/');
                   if (uIdx !== -1) downloadUrl = downloadUrl.substring(uIdx);
                   downloadUrl = `${API_BASE}/${downloadUrl.replace(/^\/+/, '')}`;
@@ -332,7 +378,7 @@ export default function AssetDetailPage() {
                       </div>
 
                       <div className="relative shrink-0">
-                        <button onClick={(e) => { e.stopPropagation(); setOpenDropdown(isDropdownOpen ? null : att.id); }} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-full transition-colors focus:outline-none">
+                        <button onClick={(e) => { e.stopPropagation(); setOpenDropdown(isDropdownOpen ? null : att.id); }} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-full transition-colors focus:outline-none font-bold text-xs uppercase bg-slate-100 border border-slate-200">
                           Opciones
                         </button>
                         {isDropdownOpen && <div className="fixed inset-0 z-30" onClick={() => setOpenDropdown(null)} />}
@@ -382,7 +428,7 @@ export default function AssetDetailPage() {
                     <div className="absolute w-4 h-4 bg-sky-500 rounded-full -left-[9px] top-1 border-[3px] border-white shadow-sm group-hover:bg-sky-600 transition-colors"></div>
                     
                     <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-2 gap-1">
-                      <span className="text-[11px] font-black text-sky-700 uppercase tracking-widest bg-sky-50 px-3 py-1 rounded w-fit">
+                      <span className="text-[11px] font-black text-sky-700 uppercase tracking-widest bg-sky-50 px-3 py-1 rounded w-fit border border-sky-100">
                         {translateMovement(mov.type)}
                       </span>
                       <span className="text-[10px] font-bold text-slate-400 uppercase">
@@ -401,13 +447,13 @@ export default function AssetDetailPage() {
                         {mov.type === 'STOCK_IN' && <p>Ingresado a: <span className="font-bold uppercase text-slate-900">{mov.toLocation?.name || '—'}</span></p>}
                         
                         {scheduledDateStr && (
-                          <p className="text-[11px] font-bold text-sky-700 mt-2 bg-sky-50 inline-block px-2 py-0.5 rounded">
+                          <p className="text-[11px] font-bold text-sky-700 mt-2 bg-sky-50 inline-block px-2 py-0.5 rounded border border-sky-100">
                             Programada: {scheduledDateStr}
                           </p>
                         )}
                         <p className="text-[10px] text-slate-400 font-bold uppercase mt-2">Registrado por: {mov.createdBy?.name || 'Sistema'}</p>
                       </div>
-                      <div className="text-sky-500 font-bold text-[10px] uppercase tracking-widest whitespace-nowrap pl-4 hidden sm:block">
+                      <div className="text-sky-500 font-bold text-[10px] uppercase tracking-widest whitespace-nowrap pl-4 hidden sm:block bg-slate-50 px-3 py-1.5 rounded border border-slate-200">
                         Ver Detalles
                       </div>
                     </div>
