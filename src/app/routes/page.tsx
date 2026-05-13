@@ -1,257 +1,249 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRoutesList } from '@/lib/hooks';
 import Guard from '@/components/auth-guard';
+import { capsFor, normalizeRole, type AppRole } from '@/lib/roles';
 
-function fDateTime(d?: string) {
-  if (!d) return '—';
-  const dt = new Date(d);
-  return dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString();
+type RouteItem = {
+  id: string;
+  code?: string | null;
+  type?: string | null;
+  status?: string | null;
+  contact?: string | null;
+  address?: string | null;
+  scheduledDate?: string | null;
+  driverName?: string | null;
+  routeNumber?: number | string | null;
+};
+
+function fDateOnly(value?: string | null) {
+  if (!value) return '—';
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return '—';
+
+  return date.toLocaleDateString('es-CO', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
 }
 
-function fDateOnly(d?: string) {
-  if (!d) return '—';
-  const dt = new Date(d);
-  return dt.toLocaleDateString();
+function formatStatus(status?: string | null) {
+  const s = String(status || '').toUpperCase().trim();
+
+  if (!s || s === 'UNDEFINED' || s === 'NULL') return 'PROGRAMADA';
+
+  if (s.includes('1/2') || s.includes('PENDING_REVIEW')) {
+    return 'COMPLETADA 1/2';
+  }
+
+  if (s.includes('2/2') || s.includes('COMPLETED') || s === 'COMPLETADA') {
+    return 'COMPLETADA 2/2';
+  }
+
+  if (s.includes('IN_PROGRESS') || s.includes('CURSO')) {
+    return 'EN CURSO';
+  }
+
+  if (s.includes('SCHEDULED') || s.includes('PROGRAMADA')) {
+    return 'PROGRAMADA';
+  }
+
+  if (s.includes('CANCELLED') || s.includes('CANCELADA')) {
+    return 'CANCELADA';
+  }
+
+  return status || 'PROGRAMADA';
 }
 
-// Badge de estado con colores
-function statusBadgeClass(status?: string) {
-  const s = (status || '').toUpperCase();
+function statusBadgeClass(status?: string | null) {
+  const s = String(status || '').toUpperCase();
 
-  // COMPLETADA → verde
-  if (s.includes('COMPLET')) {
-    return 'inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 dark:border-emerald-500/60 dark:bg-emerald-900/40 dark:text-emerald-200';
+  if (s.includes('1/2') || s.includes('PENDING_REVIEW')) {
+    return 'bg-blue-50 text-blue-900 border-blue-200 px-3 py-1 rounded-full text-[10px] font-bold border shadow-sm';
   }
 
-  // PROGRAMADA → amarillo
-  if (s.includes('PROGRAM')) {
-    return 'inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/60 dark:bg-amber-900/40 dark:text-amber-200';
+  if (s.includes('2/2') || s.includes('COMPLET')) {
+    return 'bg-emerald-50 text-emerald-900 border-emerald-200 px-3 py-1 rounded-full text-[10px] font-bold border shadow-sm';
   }
 
-  // EN CURSO → azul
-  if (s.includes('CURSO')) {
-    return 'inline-flex items-center rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-800 dark:border-sky-500/60 dark:bg-sky-900/40 dark:text-sky-200';
+  if (s.includes('CURSO') || s.includes('PROGRESS')) {
+    return 'bg-sky-50 text-sky-800 border-sky-200 px-3 py-1 rounded-full text-[10px] font-bold border shadow-sm';
   }
 
-  // CANCELADA → rojo
+  if (s.includes('PROGRAM') || s.includes('SCHEDULED')) {
+    return 'bg-amber-50 text-amber-800 border-amber-200 px-3 py-1 rounded-full text-[10px] font-bold border shadow-sm';
+  }
+
   if (s.includes('CANCEL')) {
-    return 'inline-flex items-center rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-800 dark:border-rose-500/60 dark:bg-rose-900/40 dark:text-rose-200';
+    return 'bg-rose-50 text-rose-800 border-rose-200 px-3 py-1 rounded-full text-[10px] font-bold border shadow-sm';
   }
 
-  // BORRADOR / otros → gris
-  return 'inline-flex items-center rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-700 dark:border-slate-600 dark:bg-slate-900/50 dark:text-slate-200';
+  return 'bg-slate-50 text-slate-600 border-slate-200 px-3 py-1 rounded-full text-[10px] font-bold border shadow-sm';
+}
+
+function extractRoutes(data: unknown): RouteItem[] {
+  if (Array.isArray(data)) {
+    return data as RouteItem[];
+  }
+
+  if (
+    data &&
+    typeof data === 'object' &&
+    Array.isArray((data as any).items)
+  ) {
+    return (data as any).items as RouteItem[];
+  }
+
+  return [];
+}
+
+function getStoredRole(): AppRole | null {
+  if (typeof window === 'undefined') return null;
+
+  return normalizeRole(localStorage.getItem('user_role'));
 }
 
 export default function RoutesPage() {
+  const [mounted, setMounted] = useState(false);
+  const [role, setRole] = useState<AppRole | null>(null);
   const [q, setQ] = useState('');
-  const { data, isLoading } = useRoutesList(q);
 
-  // Paginación local
-  const [pageSize, setPageSize] = useState<number>(10);
-  const [page, setPage] = useState<number>(1);
-
-  // Reset página cuando cambia búsqueda o pageSize
   useEffect(() => {
-    setPage(1);
-  }, [q, pageSize]);
+    setMounted(true);
+    setRole(getStoredRole());
+  }, []);
 
-  const routes = data ?? [];
-  const totalItems = routes.length;
+  const caps = useMemo(() => capsFor(role), [role]);
 
-  const totalPages = useMemo(
-    () => (totalItems === 0 ? 1 : Math.max(1, Math.ceil(totalItems / pageSize))),
-    [totalItems, pageSize]
-  );
+  const canViewRoutes = caps.viewRoutes;
+  const canEditRoutes = caps.editRoutes;
+  const isDriver = role === 'CONDUCTOR';
 
-  const paginatedRoutes = useMemo(() => {
-    if (totalItems === 0) return [];
-    const start = (page - 1) * pageSize;
-    return routes.slice(start, start + pageSize);
-  }, [routes, page, pageSize, totalItems]);
+  const { data, isLoading, isError } = useRoutesList(q);
 
-  const showingCount =
-    totalItems === 0 ? 0 : Math.min(totalItems, page * pageSize);
+  const routes = useMemo(() => extractRoutes(data), [data]);
+
+  if (!mounted) {
+    return (
+      <Guard>
+        <div className="p-8 text-center text-slate-500 font-bold tracking-widest animate-pulse">
+          CARGANDO RUTAS...
+        </div>
+      </Guard>
+    );
+  }
 
   return (
     <Guard>
-      <section className="space-y-3">
-        {/* Buscador */}
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Buscar por dirección, contacto, activo…"
-              className="w-full rounded-full border px-10 py-2 text-sm bg-white dark:bg-slate-950
-                       focus:outline-none focus:ring-2 focus:ring-emerald-300 dark:focus:ring-emerald-700"
-            />
-            <svg
-              className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-          </div>
+      {!canViewRoutes ? (
+        <div className="rounded-xl border bg-white p-4 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+          No tienes permisos para ver rutas.
         </div>
+      ) : (
+        <section className="space-y-6 p-6 max-w-5xl mx-auto">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-slate-800">
+                Rutas de Servicio
+              </h1>
 
-        {/* Bloque: Mostrar X + texto + botones paginación */}
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-xs text-slate-500">
-          {/* Selector "Mostrar:" */}
-          <div className="flex items-center gap-2">
-            <span>Mostrar:</span>
-            <select
-              className="rounded-xl border px-2 py-1.5 text-xs bg-white dark:bg-slate-950"
-              value={pageSize}
-              onChange={(e) => setPageSize(Number(e.target.value) || 10)}
-            >
-              <option value={10}>10</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-            </select>
-            <span>por página</span>
-          </div>
+              <p className="mt-1 text-sm text-slate-500">
+                {isDriver
+                  ? 'Solo se muestran las rutas asignadas a tu usuario.'
+                  : 'Consulta y gestión operativa de rutas logísticas.'}
+              </p>
+            </div>
 
-          {/* Texto + botones paginación */}
-          <div className="flex items-center gap-4">
-            <span>
-              {totalItems === 0
-                ? 'Sin rutas para mostrar.'
-                : `Mostrando ${showingCount} de ${totalItems} rutas`}
-            </span>
-
-            {totalItems > 0 && totalPages > 1 && (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="px-2 py-1 rounded-lg border disabled:opacity-40"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page <= 1}
-                >
-                  Anterior
-                </button>
-                <span>
-                  Página {page} de {totalPages}
-                </span>
-                <button
-                  type="button"
-                  className="px-2 py-1 rounded-lg border disabled:opacity-40"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={page >= totalPages}
-                >
-                  Siguiente
-                </button>
+            {canEditRoutes && (
+              <div className="rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-800 border border-sky-100">
+                Modo administrador
               </div>
             )}
           </div>
-        </div>
 
-        {/* Lista */}
-        <div className="space-y-3">
-          {isLoading && (
-            <div className="text-sm text-slate-500">Cargando rutas…</div>
-          )}
-          {!isLoading && totalItems === 0 && (
-            <div className="text-sm text-slate-500">Sin resultados.</div>
-          )}
+          <input
+            value={q}
+            onChange={(event) => setQ(event.target.value)}
+            placeholder="Buscar por paciente, código, dirección o conductor..."
+            className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:ring-2 focus:ring-blue-900 outline-none shadow-sm"
+          />
 
-          {paginatedRoutes.map((r) => {
-            const title = `${r.code.toString().padStart(3, '0')} - ${r.type}`; // type ya viene en español
-            const createdAt = (r as any).createdAt as string | undefined;
-            const scheduledDate =
-              ((r as any).scheduledDate as string | undefined) ?? r.date;
+          <div className="grid gap-4">
+            {isLoading && (
+              <div className="text-sm text-slate-500 font-bold tracking-widest text-center py-10">
+                OBTENIENDO DATOS...
+              </div>
+            )}
 
-            return (
-              <div
-                key={r.id}
-                className="rounded-xl border bg-white dark:bg-slate-900 p-3"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="font-semibold truncate max-w-[260px]"
-                        title={title}
-                      >
-                        {title}
+            {isError && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-bold text-rose-700">
+                No se pudieron cargar las rutas.
+              </div>
+            )}
+
+            {!isLoading && !isError && routes.length === 0 && (
+              <div className="text-sm text-slate-500 font-bold tracking-widest text-center py-10">
+                NO HAY RUTAS DISPONIBLES
+              </div>
+            )}
+
+            {routes.map((route) => {
+              const displayStatus = formatStatus(route.status);
+              const code =
+                route.code ||
+                (route.routeNumber ? `RUTA-${route.routeNumber}` : 'SIN CÓDIGO');
+
+              return (
+                <div
+                  key={route.id}
+                  className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center hover:shadow-md transition-all"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-3 mb-2">
+                      <span className="font-bold text-slate-900">
+                        {code} - {route.type || 'SERVICIO'}
                       </span>
 
-                      {/* Badge de estado con color */}
-                      <span className={statusBadgeClass(r.status as string)}>
-                        {r.status}
+                      <span className={statusBadgeClass(displayStatus)}>
+                        {displayStatus}
                       </span>
                     </div>
 
-                    <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1 mt-1 text-xs text-slate-600 dark:text-slate-300">
-                      {/* Fechas */}
-                      <div>
-                        <span className="text-slate-500">Creada:&nbsp;</span>
-                        <b>{fDateTime(createdAt)}</b>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">Programada:&nbsp;</span>
-                        {/* SOLO FECHA, SIN HORA */}
-                        <b>{fDateOnly(scheduledDate)}</b>
-                      </div>
+                    <p className="text-xs text-slate-500 font-bold uppercase truncate">
+                      {route.contact || 'SIN CONTACTO'} —{' '}
+                      {route.address || 'SIN DIRECCIÓN'}
+                    </p>
 
-                      {/* Teléfono + Dirección */}
-                      <div>
-                        <span className="text-slate-500">Teléfono:&nbsp;</span>
-                        <b>{r.contactPhone || '—'}</b>
-                      </div>
-                      <div className="truncate">
-                        <span className="text-slate-500">Dirección:&nbsp;</span>
-                        <b title={r.address || ''}>{r.address || '—'}</b>
-                      </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <p className="text-[11px] font-bold text-sky-700 bg-sky-50 inline-block px-2 py-1 rounded">
+                        Programada para: {fDateOnly(route.scheduledDate)}
+                      </p>
 
-                      {/* Paciente */}
-                      <div className="truncate sm:col-span-2">
-                        <span className="text-slate-500">Paciente:&nbsp;</span>
-                        <b title={r.contact || ''}>
-                          {r.contact || '—'}
-                          {r.contactDoc
-                            ? ` - ${r.contactDoc.replace(/^Doc:\s*/i, '')}`
-                            : ''}
-                        </b>
-                      </div>
-
-                      {/* Activos */}
-                      <div className="truncate sm:col-span-2">
-                        <span className="text-slate-500">Activos:&nbsp;</span>
-                        <b className="break-words">
-                          {r.assetTags?.length ? r.assetTags.join(', ') : '—'}
-                        </b>
-                      </div>
+                      {!isDriver && route.driverName && (
+                        <p className="text-[11px] font-bold text-slate-600 bg-slate-50 inline-block px-2 py-1 rounded">
+                          Conductor: {route.driverName}
+                        </p>
+                      )}
                     </div>
                   </div>
 
                   <Link
-                    href={`/routes/${r.id}`}
-                    className="text-sm text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white inline-flex items-center gap-1 shrink-0"
+                    href={`/routes/${route.id}`}
+                    className="bg-blue-900 text-white px-6 py-2.5 rounded-lg text-xs font-bold shadow-lg hover:bg-blue-950 transition-colors uppercase tracking-wider shrink-0 sm:ml-4 text-center"
                   >
-                    Ver
-                    <svg
-                      className="h-4 w-4"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M9 18l6-6-6-6" />
-                    </svg>
+                    {isDriver ? 'GESTIONAR' : 'VER DETALLE'}
                   </Link>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+              );
+            })}
+          </div>
+        </section>
+      )}
     </Guard>
   );
 }

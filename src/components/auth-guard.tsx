@@ -1,90 +1,216 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { getAccessToken } from '@/lib/api';
 
-const ROLE_DRIVER = 'CONDUCTOR';
-const ROLE_INVENTORY = 'INVENTARIO';
-const ROLE_ADMIN = 'ADMINISTRATIVO';
+import { getAccessToken } from '@/lib/api';
+import { normalizeRole, type AppRole } from '@/lib/roles';
 
 type GuardProps = {
   children: ReactNode;
 };
 
-// Home por rol
-const HOME_BY_ROLE: Record<string, string> = {
-  [ROLE_DRIVER]: '/routes',
-  [ROLE_INVENTORY]: '/assets',
-  [ROLE_ADMIN]: '/assets',
+type RouteRule = {
+  path: string;
+  mode: 'exact' | 'prefix';
 };
 
-// Rutas permitidas por rol (prefijos)
-const ALLOWED_PATHS_BY_ROLE: Record<string, string[]> = {
-  [ROLE_DRIVER]: ['/routes'],
-  [ROLE_INVENTORY]: ['/assets', '/routes', '/people', '/entregas', '/reportes'],
-  // Si quieres que el admin vea más cosas, agrégalas aquí
-  [ROLE_ADMIN]: ['/assets', '/reports'],
+const HOME_BY_ROLE: Record<AppRole, string> = {
+  SUPER_ADMIN: '/assets',
+  ACTIVOS_FIJOS: '/assets',
+  INVENTARIO: '/assets',
+  ADMINISTRATIVO: '/assets',
+  CONDUCTOR: '/routes',
+  VIEWER: '/assets',
 };
-
-function getHomeForRole(role?: string | null) {
-  const r = (role || '').toUpperCase();
-  return HOME_BY_ROLE[r] || '/assets';
-}
-
-function isPathAllowedForRole(role: string | null, pathname: string | null) {
-  if (!pathname) return true;
-  const r = (role || '').toUpperCase();
-
-  const bases = ALLOWED_PATHS_BY_ROLE[r];
-  if (!bases) {
-    // Rol desconocido → sin restricciones adicionales
-    return true;
-  }
-
-  return bases.some(
-    (base) => pathname === base || pathname.startsWith(base + '/'),
-  );
-}
 
 /**
- * Guard:
- * - Si no hay token => redirige a /login
- * - Si hay token:
- *    - Lee user_role de localStorage
- *    - Valida que la ruta actual esté permitida para ese rol
- *    - Si no está permitida => redirige a la "home" de ese rol
+ * Reglas importantes:
+ *
+ * - /assets como exact permite SOLO el listado.
+ * - /assets/[id] se permite con prefijo usando /assets/ para detalle/anexos.
+ * - /assets/new, /assets/import y /assets/:id/edit se bloquean por DENY_RULES
+ *   cuando el rol no tiene permiso de escritura.
+ *
+ * No uses solo startsWith('/assets') para roles de lectura, porque eso abre
+ * creación/importación/edición por URL directa.
  */
+const ALLOW_RULES_BY_ROLE: Record<AppRole, RouteRule[]> = {
+  SUPER_ADMIN: [
+    { path: '/assets', mode: 'prefix' },
+    { path: '/entregas', mode: 'prefix' },
+    { path: '/routes', mode: 'prefix' },
+    { path: '/people', mode: 'prefix' },
+    { path: '/reportes', mode: 'prefix' },
+    { path: '/settings', mode: 'prefix' },
+  ],
+
+  ACTIVOS_FIJOS: [
+    { path: '/assets', mode: 'prefix' },
+    { path: '/entregas', mode: 'prefix' },
+    { path: '/routes', mode: 'prefix' },
+    { path: '/people', mode: 'prefix' },
+    { path: '/reportes', mode: 'prefix' },
+    { path: '/settings', mode: 'prefix' },
+  ],
+
+  INVENTARIO: [
+    { path: '/assets', mode: 'prefix' },
+    { path: '/entregas', mode: 'prefix' },
+    { path: '/routes', mode: 'prefix' },
+    { path: '/people', mode: 'prefix' },
+    { path: '/reportes', mode: 'prefix' },
+  ],
+
+  ADMINISTRATIVO: [
+    { path: '/assets', mode: 'prefix' },
+    { path: '/reportes', mode: 'prefix' },
+  ],
+
+  CONDUCTOR: [
+    { path: '/routes', mode: 'prefix' },
+  ],
+
+  VIEWER: [
+    { path: '/assets', mode: 'prefix' },
+  ],
+};
+
+const DENY_RULES_BY_ROLE: Partial<Record<AppRole, RouteRule[]>> = {
+  INVENTARIO: [
+    { path: '/settings', mode: 'prefix' },
+  ],
+
+  ADMINISTRATIVO: [
+    { path: '/assets/new', mode: 'exact' },
+    { path: '/assets/import', mode: 'exact' },
+    { path: '/assets/', mode: 'prefix' },
+    { path: '/people', mode: 'prefix' },
+    { path: '/entregas', mode: 'prefix' },
+    { path: '/routes', mode: 'prefix' },
+    { path: '/settings', mode: 'prefix' },
+  ],
+
+  CONDUCTOR: [
+    { path: '/assets', mode: 'prefix' },
+    { path: '/people', mode: 'prefix' },
+    { path: '/entregas', mode: 'prefix' },
+    { path: '/reportes', mode: 'prefix' },
+    { path: '/settings', mode: 'prefix' },
+  ],
+
+  VIEWER: [
+    { path: '/assets/new', mode: 'exact' },
+    { path: '/assets/import', mode: 'exact' },
+    { path: '/assets/', mode: 'prefix' },
+    { path: '/people', mode: 'prefix' },
+    { path: '/entregas', mode: 'prefix' },
+    { path: '/routes', mode: 'prefix' },
+    { path: '/reportes', mode: 'prefix' },
+    { path: '/settings', mode: 'prefix' },
+  ],
+};
+
+function isPublicPath(pathname: string | null) {
+  if (!pathname) return false;
+
+  return pathname === '/login' || pathname.startsWith('/login/');
+}
+
+function normalizePath(pathname: string | null) {
+  if (!pathname) return '/';
+
+  if (pathname.length > 1 && pathname.endsWith('/')) {
+    return pathname.slice(0, -1);
+  }
+
+  return pathname;
+}
+
+function matchRule(pathname: string, rule: RouteRule) {
+  const path = normalizePath(pathname);
+  const rulePath = normalizePath(rule.path);
+
+  if (rule.mode === 'exact') {
+    return path === rulePath;
+  }
+
+  /**
+   * Prefijo seguro:
+   * - '/people' permite '/people' y '/people/...'
+   * - '/assets/' como regla permite cualquier subruta de /assets,
+   *   útil para bloquear detalle/edición/import en roles read-only.
+   */
+  if (rulePath.endsWith('/')) {
+    return path.startsWith(rulePath);
+  }
+
+  return path === rulePath || path.startsWith(`${rulePath}/`);
+}
+
+function isDenied(pathname: string, role: AppRole) {
+  const rules = DENY_RULES_BY_ROLE[role] ?? [];
+  return rules.some((rule) => matchRule(pathname, rule));
+}
+
+function isAllowed(pathname: string, role: AppRole) {
+  if (isDenied(pathname, role)) {
+    return false;
+  }
+
+  const rules = ALLOW_RULES_BY_ROLE[role] ?? [];
+  return rules.some((rule) => matchRule(pathname, rule));
+}
+
+function getHomeForRole(role: AppRole | null) {
+  if (!role) return '/assets';
+  return HOME_BY_ROLE[role] ?? '/assets';
+}
+
+function getStoredRole(): AppRole | null {
+  if (typeof window === 'undefined') return null;
+
+  return normalizeRole(localStorage.getItem('user_role'));
+}
+
 export default function Guard({ children }: GuardProps) {
   const router = useRouter();
-  const pathname = usePathname();
+  const pathnameRaw = usePathname();
+
+  const pathname = useMemo(() => normalizePath(pathnameRaw), [pathnameRaw]);
+
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    // La página de login no se protege
-    if (pathname?.startsWith('/login')) {
+    if (isPublicPath(pathname)) {
       setReady(true);
       return;
     }
 
+    setReady(false);
+
     const token = getAccessToken();
+
     if (!token) {
       router.replace('/login');
       return;
     }
 
-    let role: string | null = null;
-    if (typeof window !== 'undefined') {
-      role = localStorage.getItem('user_role');
+    const role = getStoredRole();
+
+    if (!role) {
+      router.replace('/assets');
+      return;
     }
 
-    if (!isPathAllowedForRole(role, pathname)) {
+    if (!isAllowed(pathname, role)) {
       const target = getHomeForRole(role);
+
       if (pathname !== target) {
         router.replace(target);
+        return;
       }
-      return;
     }
 
     setReady(true);
