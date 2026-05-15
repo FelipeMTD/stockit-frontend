@@ -1,14 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
+
 import AssetTable from '@/components/assets/asset-table';
 import ImportAssetsModal from '@/components/assets/import-assets-modal';
 import Guard from '@/components/auth-guard';
-import { api, type AuthUser } from '@/lib/api';
-import { capsFor, normalizeRole, type AppRole } from '@/lib/roles';
+import { api } from '@/lib/api';
+import { useRbacSession } from '@/lib/rbac-session';
 
 type AssetSummary = {
   id: string;
@@ -39,78 +40,20 @@ export default function AssetsPage() {
   const router = useRouter();
   const qc = useQueryClient();
 
+  const { user, role, caps, isAuthenticated } = useRbacSession();
+
   const [showImport, setShowImport] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
-
-  const [me, setMe] = useState<AuthUser | null>(null);
-  const [role, setRole] = useState<AppRole | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [authError, setAuthError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadMe() {
-      try {
-        setAuthError(null);
-
-        const res = await api.get('/api/auth/me');
-        if (!active) return;
-
-        const user = res.data as AuthUser;
-        const normalizedRole = normalizeRole(user.role);
-
-        if (typeof window !== 'undefined') {
-          if (normalizedRole) {
-            localStorage.setItem('user_role', normalizedRole);
-          } else {
-            localStorage.removeItem('user_role');
-          }
-        }
-
-        setMe({
-          ...user,
-          role: normalizedRole ?? user.role,
-        });
-
-        setRole(normalizedRole);
-      } catch (err) {
-        console.error('Error cargando /api/auth/me', err);
-
-        if (!active) return;
-
-        setMe(null);
-        setRole(null);
-        setAuthError('No se pudo validar la sesión del usuario.');
-      } finally {
-        if (active) setAuthLoading(false);
-      }
-    }
-
-    loadMe();
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const caps = useMemo(() => capsFor(role), [role]);
 
   const canViewAssets = caps.viewInventory;
   const canManageAssets = caps.editInventory;
   const isDriver = role === 'CONDUCTOR';
 
   useEffect(() => {
-    if (!authLoading && isDriver) {
+    if (isDriver) {
       router.replace('/routes');
     }
-  }, [authLoading, isDriver, router]);
-
-  useEffect(() => {
-    if (!authLoading && role && !canViewAssets) {
-      router.replace('/assets');
-    }
-  }, [authLoading, role, canViewAssets, router]);
+  }, [isDriver, router]);
 
   const [assets, setAssets] = useState<AssetSummary[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
@@ -128,7 +71,12 @@ export default function AssetsPage() {
 
   const transferableAssets = assets.filter((asset) => {
     const status = String(asset.status || '').trim().toUpperCase();
-    return status === 'IN_STOCK' || status === 'EN_BODEGA' || status === 'EN BODEGA';
+
+    return (
+      status === 'IN_STOCK' ||
+      status === 'EN_BODEGA' ||
+      status === 'EN BODEGA'
+    );
   });
 
   const normalizedSearch = assetSearch.trim().toLowerCase();
@@ -206,7 +154,7 @@ export default function AssetsPage() {
     setTransferError(null);
   };
 
-  const handleTransferSubmit = async (event: React.FormEvent) => {
+  const handleTransferSubmit = async (event: FormEvent) => {
     event.preventDefault();
 
     if (!canManageAssets) {
@@ -254,13 +202,13 @@ export default function AssetsPage() {
 
   return (
     <Guard>
-      {authLoading || isDriver ? (
+      {isDriver ? (
         <div className="p-4 text-sm text-slate-500">
-          {authLoading ? 'Verificando usuario…' : 'Redirigiendo a rutas…'}
+          Redirigiendo a rutas…
         </div>
-      ) : authError ? (
-        <div className="rounded-xl border bg-white p-4 text-sm text-red-600 dark:bg-slate-900">
-          {authError}
+      ) : !isAuthenticated ? (
+        <div className="p-4 text-sm text-slate-500">
+          Verificando sesión…
         </div>
       ) : !canViewAssets ? (
         <div className="rounded-xl border bg-white p-4 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300">
@@ -272,9 +220,15 @@ export default function AssetsPage() {
             <div>
               <h1 className="text-xl font-semibold">Activos</h1>
 
-              {me?.role && (
+              {role && (
                 <p className="mt-1 text-xs text-slate-500">
-                  Rol: {me.role}
+                  Rol: {role}
+                </p>
+              )}
+
+              {user?.name && (
+                <p className="mt-0.5 text-xs text-slate-400">
+                  Usuario: {user.name}
                 </p>
               )}
             </div>
