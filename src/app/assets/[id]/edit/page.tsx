@@ -3,9 +3,11 @@
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, type AuthUser } from '@/lib/api';
 import { useCategories, useLocations, useSites } from '@/lib/hooks';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import Guard from '@/components/auth-guard';
+import { capsFor, normalizeRole, type AppRole } from '@/lib/roles';
 
 /* ────────────────────────────────────────────────────────────────────────────
    Tipos
@@ -24,18 +26,15 @@ type AssetDetail = {
   invoiceNumber?: string | null;
   invimaCode?: string | null;
   purchaseCost?: number | null;
-  purchaseDate?: string | null; // ISO
-  warrantyUntil?: string | null; // ISO
+  purchaseDate?: string | null;
+  warrantyUntil?: string | null;
   acquisitionType?: string | null;
   riskLevel?: string | null;
-
   maintenanceFrequency?: MaintenanceFrequency | null;
-
   status: 'IN_STOCK' | 'ASSIGNED' | 'IN_REPAIR' | 'LOST' | 'DISPOSED';
   lifeState?: 'ACTIVE' | 'INACTIVE' | 'RETIRED' | null;
   photoUrl?: string | null;
   notes?: string | null;
-
   site?: { id: string; name: string } | null;
   currentLocation?: { id: string; name: string } | null;
   assignedWarehouse?: { id: string; name: string } | null;
@@ -56,14 +55,11 @@ type AssetUpdatePayload = {
   warrantyUntil?: string | null;
   acquisitionType?: string | null;
   riskLevel?: string | null;
-
   maintenanceFrequency?: MaintenanceFrequency | null;
-
   status?: 'IN_STOCK' | 'ASSIGNED' | 'IN_REPAIR' | 'LOST' | 'DISPOSED';
   lifeState?: 'ACTIVE' | 'INACTIVE' | 'RETIRED' | null;
   photoUrl?: string | null;
   notes?: string | null;
-
   siteId?: string | null;
   currentLocationId?: string | null;
   assignedWarehouseId?: string | null;
@@ -93,43 +89,49 @@ const TIPOS_ADQUISICION = [
 
 const NIVELES_RIESGO = ['I', 'IIA', 'IIB', 'III', 'NO APLICA'] as const;
 
-const FRECUENCIAS_MANTENIMIENTO: Array<{ value: MaintenanceFrequency; label: string }> = [
+const FRECUENCIAS_MANTENIMIENTO: Array<{
+  value: MaintenanceFrequency;
+  label: string;
+}> = [
   { value: 'ANUAL', label: 'Anual' },
   { value: 'SEMESTRAL', label: 'Semestral' },
   { value: 'TRIMESTRAL', label: 'Trimestral' },
   { value: 'NO_APLICA', label: 'No aplica' },
 ];
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Utils
-──────────────────────────────────────────────────────────────────────────── */
 function toYYYYMMDD(iso?: string | null) {
   if (!iso) return '';
+
   const d = new Date(iso);
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
+
   return `${yyyy}-${mm}-${dd}`;
 }
-function numOrNull(v: string) {
-  const n = v.replace(/\./g, '').replace(/,/g, '.');
-  return n === '' ? null : Number(n);
+
+function numOrNull(value: string) {
+  const normalized = value.replace(/\./g, '').replace(/,/g, '.');
+  return normalized === '' ? null : Number(normalized);
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
-   React Query
-──────────────────────────────────────────────────────────────────────────── */
 function useAsset(id?: string) {
   return useQuery({
     queryKey: ['asset', id],
     enabled: !!id,
-    queryFn: async () => (await api.get<AssetDetail>(`/api/assets/${id}`)).data,
+    queryFn: async () => {
+      const res = await api.get<AssetDetail>(`/api/assets/${id}`);
+      return res.data;
+    },
   });
 }
+
 function useUpdateAsset(id: string) {
   const qc = useQueryClient();
+
   return useMutation({
-    mutationFn: (data: AssetUpdatePayload) => api.patch(`/api/assets/${id}`, data),
+    mutationFn: (data: AssetUpdatePayload) =>
+      api.patch(`/api/assets/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['asset', id] });
       qc.invalidateQueries({ queryKey: ['assets'] });
@@ -137,19 +139,23 @@ function useUpdateAsset(id: string) {
   });
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Página
-──────────────────────────────────────────────────────────────────────────── */
 export default function EditAssetPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
 
   const { data: asset, isLoading } = useAsset(id);
   const cats = useCategories();
-  const locs = useLocations(); 
-  const sites = useSites(); 
+  const locs = useLocations();
+  const sites = useSites();
 
   const upd = useUpdateAsset(String(id));
+
+  const [role, setRole] = useState<AppRole | null>(null);
+  const [checkingRole, setCheckingRole] = useState(true);
+  const [roleError, setRoleError] = useState<string | null>(null);
+
+  const caps = useMemo(() => capsFor(role), [role]);
+  const canEditAsset = caps.editInventory;
 
   const [form, setForm] = useState<any>({
     _init: false,
@@ -176,6 +182,62 @@ export default function EditAssetPage() {
     currentLocationId: '',
     assignedWarehouseId: '',
   });
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadMe() {
+      try {
+        setRoleError(null);
+
+        const res = await api.get('/api/auth/me');
+        if (!active) return;
+
+        const user = res.data as AuthUser;
+        const normalizedRole = normalizeRole(user.role);
+
+        if (typeof window !== 'undefined') {
+          if (normalizedRole) {
+            localStorage.setItem('user_role', normalizedRole);
+          } else {
+            localStorage.removeItem('user_role');
+          }
+        }
+
+        setRole(normalizedRole);
+      } catch (error) {
+        console.error('Error validando permisos para editar activo:', error);
+
+        if (!active) return;
+
+        setRole(null);
+        setRoleError('No se pudo validar la sesión del usuario.');
+      } finally {
+        if (active) {
+          setCheckingRole(false);
+        }
+      }
+    }
+
+    loadMe();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (checkingRole) return;
+
+    if (role === 'CONDUCTOR') {
+      router.replace('/routes');
+      return;
+    }
+
+    if (!canEditAsset) {
+      router.replace(`/assets/${id}`);
+    }
+  }, [checkingRole, role, canEditAsset, router, id]);
 
   useEffect(() => {
     if (!asset || form._init) return;
@@ -211,7 +273,11 @@ export default function EditAssetPage() {
     });
   }, [asset, form._init]);
 
-  const set = (k: string, v: any) => setForm((s: any) => ({ ...s, [k]: v }));
+  const set = (key: string, value: any) =>
+    setForm((state: any) => ({
+      ...state,
+      [key]: value,
+    }));
 
   const previewSrc = useMemo(() => {
     const url = String(form.photoUrl || '').trim();
@@ -222,25 +288,46 @@ export default function EditAssetPage() {
   const allLocations: any[] = Array.isArray(locItemsRaw) ? locItemsRaw : [];
 
   const selectedSiteId = form.siteId || '';
-
-  // 👇 LÓGICA CLAVE AÑADIDA PARA ESTA VISTA
   const selectedCategoryId = form.categoryId || '';
-  const selectedCategory = (cats.data as any[])?.find((c: any) => c.id === selectedCategoryId);
+
+  const categoryItemsRaw = (cats.data as any)?.items ?? cats.data ?? [];
+  const categoryItems: any[] = Array.isArray(categoryItemsRaw)
+    ? categoryItemsRaw
+    : [];
+
+  const siteItemsRaw = (sites.data as any)?.items ?? sites.data ?? [];
+  const siteItems: any[] = Array.isArray(siteItemsRaw) ? siteItemsRaw : [];
+
+  const selectedCategory = categoryItems.find(
+    (category: any) => category.id === selectedCategoryId,
+  );
+
   const availableNames = selectedCategory?.allowedNames || [];
 
   const warehouses = useMemo(() => {
     if (!allLocations.length) return [];
-    const hasType = allLocations.some((l) => typeof l?.type === 'string');
+
+    const hasType = allLocations.some(
+      (location) => typeof location?.type === 'string',
+    );
+
     let list = hasType
-      ? allLocations.filter((l) => (l?.type || '').toLowerCase() === 'warehouse')
+      ? allLocations.filter(
+          (location) =>
+            String(location?.type || '').toLowerCase() === 'warehouse',
+        )
       : allLocations;
 
     if (selectedSiteId) {
-      const hasSiteId = list.some((l) => 'siteId' in l);
+      const hasSiteId = list.some((location) => 'siteId' in location);
+
       if (hasSiteId) {
-        list = list.filter((l) => !l.siteId || l.siteId === selectedSiteId);
+        list = list.filter(
+          (location) => !location.siteId || location.siteId === selectedSiteId,
+        );
       }
     }
+
     return list;
   }, [allLocations, selectedSiteId]);
 
@@ -248,16 +335,29 @@ export default function EditAssetPage() {
     if (!allLocations.length) return [];
     if (!selectedSiteId) return allLocations;
 
-    const hasSiteId = allLocations.some((l) => 'siteId' in l);
+    const hasSiteId = allLocations.some((location) => 'siteId' in location);
+
     if (!hasSiteId) return allLocations;
 
-    return allLocations.filter((l) => !l.siteId || l.siteId === selectedSiteId);
+    return allLocations.filter(
+      (location) => !location.siteId || location.siteId === selectedSiteId,
+    );
   }, [allLocations, selectedSiteId]);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!form.name.trim()) return toast.error('El nombre es obligatorio');
-    if (!form.tag.trim()) return toast.error('El código (tag) es obligatorio');
+  async function onSubmit(event: React.FormEvent) {
+    event.preventDefault();
+
+    if (!canEditAsset) {
+      return toast.error('No tienes permisos para editar activos.');
+    }
+
+    if (!form.name.trim()) {
+      return toast.error('El nombre es obligatorio');
+    }
+
+    if (!form.tag.trim()) {
+      return toast.error('El código (tag) es obligatorio');
+    }
 
     const shouldDefaultToWarehouse =
       form.status === 'IN_STOCK' &&
@@ -280,7 +380,8 @@ export default function EditAssetPage() {
       warrantyUntil: form.warrantyUntil || null,
       acquisitionType: form.acquisitionType || null,
       riskLevel: form.riskLevel || null,
-      maintenanceFrequency: (form.maintenanceFrequency || null) as MaintenanceFrequency | null,
+      maintenanceFrequency: (form.maintenanceFrequency ||
+        null) as MaintenanceFrequency | null,
       status: form.status,
       lifeState: form.lifeState || null,
       photoUrl: form.photoUrl || null,
@@ -296,367 +397,418 @@ export default function EditAssetPage() {
       await upd.mutateAsync(payload);
       toast.success('Activo actualizado con éxito');
       router.push(`/assets/${id}`);
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error ?? 'No se pudo actualizar el activo');
+    } catch (error: any) {
+      toast.error(
+        error?.response?.data?.error ?? 'No se pudo actualizar el activo',
+      );
     }
   }
 
-  if (isLoading || !form._init) return <p className="p-4">Cargando…</p>;
-  if (!asset) return <p className="p-4">No encontrado.</p>;
+  if (checkingRole || isLoading || !form._init) {
+    return (
+      <Guard>
+        <p className="p-4 text-sm text-slate-500">
+          Verificando permisos y cargando activo…
+        </p>
+      </Guard>
+    );
+  }
+
+  if (roleError) {
+    return (
+      <Guard>
+        <div className="rounded-xl border bg-white p-4 text-sm text-red-600 dark:bg-slate-900">
+          {roleError}
+        </div>
+      </Guard>
+    );
+  }
+
+  if (!asset) {
+    return (
+      <Guard>
+        <p className="p-4">No encontrado.</p>
+      </Guard>
+    );
+  }
+
+  if (!canEditAsset) {
+    return (
+      <Guard>
+        <div className="rounded-xl border bg-white p-4 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+          No tienes permisos para editar activos.
+        </div>
+      </Guard>
+    );
+  }
 
   return (
-    <section className="space-y-4">
-      <h1 className="text-xl font-semibold">Editar activo</h1>
+    <Guard>
+      <section className="space-y-4">
+        <h1 className="text-xl font-semibold">Editar activo</h1>
 
-      <form
-        onSubmit={onSubmit}
-        className="space-y-4 border rounded-2xl bg-white dark:bg-slate-900 p-4"
-      >
-        <div className="grid sm:grid-cols-2 gap-3">
-          <div className="grid gap-1.5">
-            <label className="text-sm">
-              Código (tag) <span className="text-rose-500">*</span>
-            </label>
-            <input
-              value={form.tag}
-              onChange={(e) => set('tag', e.target.value)}
-              placeholder="ACT-0001"
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            />
-          </div>
+        <form
+          onSubmit={onSubmit}
+          className="space-y-4 border rounded-2xl bg-white dark:bg-slate-900 p-4"
+        >
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <label className="text-sm">
+                Código (tag) <span className="text-rose-500">*</span>
+              </label>
+              <input
+                value={form.tag}
+                onChange={(event) => set('tag', event.target.value)}
+                placeholder="ACT-0001"
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              />
+            </div>
 
-          {/* 👇 CAMBIO: Selector de Categoría AHORA ESTÁ AQUÍ */}
-          <div className="grid gap-1.5">
-            <label className="text-sm">Categoría</label>
-            <select
-              value={form.categoryId}
-              onChange={(e) => {
-                set('categoryId', e.target.value);
-                set('name', ''); // Limpiamos nombre cuando cambia la categoría
-              }}
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            >
-              <option value="">—</option>
-              {cats.data?.map((c: any) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
+            <div className="grid gap-1.5">
+              <label className="text-sm">Categoría</label>
+              <select
+                value={form.categoryId}
+                onChange={(event) => {
+                  set('categoryId', event.target.value);
+                  set('name', '');
+                }}
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              >
+                <option value="">—</option>
+
+                {categoryItems.map((category: any) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">
+                Nombre del activo <span className="text-rose-500">*</span>
+              </label>
+              <select
+                value={form.name}
+                onChange={(event) => set('name', event.target.value)}
+                disabled={!form.categoryId}
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <option value="">
+                  {!form.categoryId
+                    ? '← Elija categoría primero'
+                    : 'Seleccione nombre...'}
                 </option>
-              ))}
-            </select>
+
+                {availableNames.map((item: any) => (
+                  <option key={item.id} value={item.name}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Serie</label>
+              <input
+                value={form.serial}
+                onChange={(event) => set('serial', event.target.value)}
+                placeholder="SN-ABC-123"
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              />
+            </div>
           </div>
 
-          {/* 👇 CAMBIO: Nombre del activo (Dependiente) */}
+          <div className="grid sm:grid-cols-3 gap-3">
+            <div className="grid gap-1.5">
+              <label className="text-sm">Sede</label>
+              <select
+                value={form.siteId || ''}
+                onChange={(event) => {
+                  const newSiteId = event.target.value;
+                  set('siteId', newSiteId);
+                  set('assignedWarehouseId', '');
+                  set('currentLocationId', '');
+                }}
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              >
+                <option value="">—</option>
+
+                {siteItems.map((site: any) => (
+                  <option key={site.id} value={site.id}>
+                    {site.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Bodega asignada</label>
+              <select
+                value={form.assignedWarehouseId || ''}
+                onChange={(event) =>
+                  set('assignedWarehouseId', event.target.value)
+                }
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              >
+                <option value="">—</option>
+
+                {warehouses.map((location: any) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+
+              <p className="text-xs text-slate-500">
+                Si el activo está <b>En bodega</b> y no indicas ubicación
+                actual, se usará esta bodega.
+              </p>
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Ubicación actual</label>
+              <select
+                value={form.currentLocationId || ''}
+                onChange={(event) =>
+                  set('currentLocationId', event.target.value)
+                }
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              >
+                <option value="">—</option>
+
+                {locationOptions.map((location: any) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <label className="text-sm">Marca</label>
+              <input
+                value={form.brand}
+                onChange={(event) => set('brand', event.target.value)}
+                placeholder="Dell"
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              />
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Modelo</label>
+              <input
+                value={form.model}
+                onChange={(event) => set('model', event.target.value)}
+                placeholder="Latitude 5440"
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              />
+            </div>
+          </div>
+
+          <div className="grid sm:grid-cols-3 gap-3">
+            <div className="grid gap-1.5">
+              <label className="text-sm">Proveedor</label>
+              <input
+                value={form.supplierName}
+                onChange={(event) => set('supplierName', event.target.value)}
+                placeholder="Acme S.A."
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              />
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Factura</label>
+              <input
+                value={form.invoiceNumber}
+                onChange={(event) => set('invoiceNumber', event.target.value)}
+                placeholder="FV-12345"
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              />
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Invima</label>
+              <input
+                value={form.invimaCode}
+                onChange={(event) => set('invimaCode', event.target.value)}
+                placeholder="INV-0000"
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              />
+            </div>
+          </div>
+
+          <div className="grid sm:grid-cols-3 gap-3">
+            <div className="grid gap-1.5">
+              <label className="text-sm">Valor (COP)</label>
+              <input
+                inputMode="decimal"
+                value={form.purchaseCost}
+                onChange={(event) => set('purchaseCost', event.target.value)}
+                placeholder="2500000"
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              />
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Fecha de compra</label>
+              <input
+                type="date"
+                value={form.purchaseDate}
+                onChange={(event) => set('purchaseDate', event.target.value)}
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              />
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Garantía hasta</label>
+              <input
+                type="date"
+                value={form.warrantyUntil}
+                onChange={(event) => set('warrantyUntil', event.target.value)}
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              />
+            </div>
+          </div>
+
+          <div className="grid sm:grid-cols-4 gap-3">
+            <div className="grid gap-1.5">
+              <label className="text-sm">Tipo de adquisición</label>
+              <select
+                value={form.acquisitionType}
+                onChange={(event) => set('acquisitionType', event.target.value)}
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              >
+                <option value="">—</option>
+
+                {TIPOS_ADQUISICION.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Nivel de riesgo</label>
+              <select
+                value={form.riskLevel}
+                onChange={(event) => set('riskLevel', event.target.value)}
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              >
+                <option value="">—</option>
+
+                {NIVELES_RIESGO.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Frecuencia mantenimiento</label>
+              <select
+                value={form.maintenanceFrequency || 'NO_APLICA'}
+                onChange={(event) =>
+                  set('maintenanceFrequency', event.target.value)
+                }
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              >
+                {FRECUENCIAS_MANTENIMIENTO.map((frequency) => (
+                  <option key={frequency.value} value={frequency.value}>
+                    {frequency.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid gap-1.5">
+              <label className="text-sm">Estado operativo</label>
+              <select
+                value={form.status}
+                onChange={(event) => set('status', event.target.value)}
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              >
+                {ESTADOS_OPERATIVOS.map((status) => (
+                  <option key={status.value} value={status.value}>
+                    {status.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid sm:grid-cols-3 gap-3">
+            <div className="grid gap-1.5">
+              <label className="text-sm">Estado del activo</label>
+              <select
+                value={form.lifeState}
+                onChange={(event) => set('lifeState', event.target.value)}
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              >
+                {ESTADOS_DE_VIDA.map((state) => (
+                  <option key={state.value} value={state.value}>
+                    {state.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid gap-1.5 sm:col-span-2">
+              <label className="text-sm">Foto (URL)</label>
+              <input
+                value={form.photoUrl}
+                onChange={(event) => set('photoUrl', event.target.value)}
+                placeholder="https://tu-cdn.com/fotos/mi-activo.jpg"
+                className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              />
+
+              {previewSrc && (
+                <div className="mt-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={previewSrc}
+                    alt="Vista previa"
+                    className="h-28 w-auto rounded-lg border object-cover"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="grid gap-1.5">
-            <label className="text-sm">
-              Nombre del activo <span className="text-rose-500">*</span>
-            </label>
-            <select
-              value={form.name}
-              onChange={(e) => set('name', e.target.value)}
-              disabled={!form.categoryId}
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950 disabled:opacity-50 disabled:cursor-not-allowed"
+            <label className="text-sm">Notas</label>
+            <textarea
+              value={form.notes}
+              onChange={(event) => set('notes', event.target.value)}
+              placeholder="Observaciones, mantenimientos, comentarios…"
+              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+              rows={3}
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="text-sm px-3 py-2 rounded-lg border hover:bg-slate-50 dark:hover:bg-slate-800"
             >
-              <option value="">
-                {!form.categoryId ? '← Elija categoría primero' : 'Seleccione nombre...'}
-              </option>
-              {availableNames.map((n: any) => (
-                <option key={n.id} value={n.name}>
-                  {n.name}
-                </option>
-              ))}
-            </select>
-          </div>
+              Cancelar
+            </button>
 
-          <div className="grid gap-1.5">
-            <label className="text-sm">Serie</label>
-            <input
-              value={form.serial}
-              onChange={(e) => set('serial', e.target.value)}
-              placeholder="SN-ABC-123"
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            />
-          </div>
-        </div>
-
-        {/* Sede & Bodega asignada & Ubicación actual */}
-        <div className="grid sm:grid-cols-3 gap-3">
-          <div className="grid gap-1.5">
-            <label className="text-sm">Sede</label>
-            <select
-              value={form.siteId || ''}
-              onChange={(e) => {
-                const newSiteId = e.target.value;
-                set('siteId', newSiteId);
-                // Al cambiar de sede, limpiamos bodega y ubicación
-                set('assignedWarehouseId', '');
-                set('currentLocationId', '');
-              }}
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
+            <button
+              type="submit"
+              disabled={upd.isPending}
+              className="rounded-xl bg-lime-500 from-brand to-accent text-white px-4 py-2 text-sm hover:bg-sky-900 disabled:opacity-60"
             >
-              <option value="">—</option>
-              {sites.data?.map((s: any) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+              {upd.isPending ? 'Guardando…' : 'Guardar cambios'}
+            </button>
           </div>
-
-          <div className="grid gap-1.5">
-            <label className="text-sm">Bodega asignada</label>
-            <select
-              value={form.assignedWarehouseId || ''}
-              onChange={(e) => set('assignedWarehouseId', e.target.value)}
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            >
-              <option value="">—</option>
-              {warehouses.map((l: any) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-slate-500">
-              Si el activo está <b>En bodega</b> y no indicas ubicación actual, se
-              usará esta bodega.
-            </p>
-          </div>
-
-          <div className="grid gap-1.5">
-            <label className="text-sm">Ubicación actual</label>
-            <select
-              value={form.currentLocationId || ''}
-              onChange={(e) => set('currentLocationId', e.target.value)}
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            >
-              <option value="">—</option>
-              {locationOptions.map((l: any) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Atributos técnicos */}
-        <div className="grid sm:grid-cols-2 gap-3">
-          <div className="grid gap-1.5">
-            <label className="text-sm">Marca</label>
-            <input
-              value={form.brand}
-              onChange={(e) => set('brand', e.target.value)}
-              placeholder="Dell"
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <label className="text-sm">Modelo</label>
-            <input
-              value={form.model}
-              onChange={(e) => set('model', e.target.value)}
-              placeholder="Latitude 5440"
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            />
-          </div>
-        </div>
-
-        {/* Proveedor / Factura / Invima */}
-        <div className="grid sm:grid-cols-3 gap-3">
-          <div className="grid gap-1.5">
-            <label className="text-sm">Proveedor</label>
-            <input
-              value={form.supplierName}
-              onChange={(e) => set('supplierName', e.target.value)}
-              placeholder="Acme S.A."
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <label className="text-sm">Factura</label>
-            <input
-              value={form.invoiceNumber}
-              onChange={(e) => set('invoiceNumber', e.target.value)}
-              placeholder="FV-12345"
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <label className="text-sm">Invima</label>
-            <input
-              value={form.invimaCode}
-              onChange={(e) => set('invimaCode', e.target.value)}
-              placeholder="INV-0000"
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            />
-          </div>
-        </div>
-
-        {/* Costos / Fechas */}
-        <div className="grid sm:grid-cols-3 gap-3">
-          <div className="grid gap-1.5">
-            <label className="text-sm">Valor (COP)</label>
-            <input
-              inputMode="decimal"
-              value={form.purchaseCost}
-              onChange={(e) => set('purchaseCost', e.target.value)}
-              placeholder="2500000"
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <label className="text-sm">Fecha de compra</label>
-            <input
-              type="date"
-              value={form.purchaseDate}
-              onChange={(e) => set('purchaseDate', e.target.value)}
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <label className="text-sm">Garantía hasta</label>
-            <input
-              type="date"
-              value={form.warrantyUntil}
-              onChange={(e) => set('warrantyUntil', e.target.value)}
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            />
-          </div>
-        </div>
-
-        {/* Clasificaciones */}
-        <div className="grid sm:grid-cols-4 gap-3">
-          <div className="grid gap-1.5">
-            <label className="text-sm">Tipo de adquisición</label>
-            <select
-              value={form.acquisitionType}
-              onChange={(e) => set('acquisitionType', e.target.value)}
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            >
-              <option value="">—</option>
-              {TIPOS_ADQUISICION.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid gap-1.5">
-            <label className="text-sm">Nivel de riesgo</label>
-            <select
-              value={form.riskLevel}
-              onChange={(e) => set('riskLevel', e.target.value)}
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            >
-              <option value="">—</option>
-              {NIVELES_RIESGO.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid gap-1.5">
-            <label className="text-sm">Frecuencia mantenimiento</label>
-            <select
-              value={form.maintenanceFrequency || 'NO_APLICA'}
-              onChange={(e) => set('maintenanceFrequency', e.target.value)}
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            >
-              {FRECUENCIAS_MANTENIMIENTO.map((f) => (
-                <option key={f.value} value={f.value}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid gap-1.5">
-            <label className="text-sm">Estado operativo</label>
-            <select
-              value={form.status}
-              onChange={(e) => set('status', e.target.value)}
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            >
-              {ESTADOS_OPERATIVOS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Estado de vida & Foto */}
-        <div className="grid sm:grid-cols-3 gap-3">
-          <div className="grid gap-1.5">
-            <label className="text-sm">Estado del activo</label>
-            <select
-              value={form.lifeState}
-              onChange={(e) => set('lifeState', e.target.value)}
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            >
-              {ESTADOS_DE_VIDA.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid gap-1.5 sm:col-span-2">
-            <label className="text-sm">Foto (URL)</label>
-            <input
-              value={form.photoUrl}
-              onChange={(e) => set('photoUrl', e.target.value)}
-              placeholder="https://tu-cdn.com/fotos/mi-activo.jpg"
-              className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            />
-            {previewSrc && (
-              <div className="mt-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={previewSrc}
-                  alt="Vista previa"
-                  className="h-28 w-auto rounded-lg border object-cover"
-                />
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Notas */}
-        <div className="grid gap-1.5">
-          <label className="text-sm">Notas</label>
-          <textarea
-            value={form.notes}
-            onChange={(e) => set('notes', e.target.value)}
-            placeholder="Observaciones, mantenimientos, comentarios…"
-            className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950"
-            rows={3}
-          />
-        </div>
-
-        {/* Acciones */}
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="text-sm px-3 py-2 rounded-lg border hover:bg-slate-50 dark:hover:bg-slate-800"
-          >
-            Cancelar
-          </button>
-          <button
-            type="submit"
-            disabled={upd.isPending}
-            className="rounded-xl bg-lime-500 from-brand to-accent text-white px-4 py-2 text-sm hover:bg-sky-900 disabled:opacity-60"
-          >
-            {upd.isPending ? 'Guardando…' : 'Guardar cambios'}
-          </button>
-        </div>
-      </form>
-    </section>
+        </form>
+      </section>
+    </Guard>
   );
 }

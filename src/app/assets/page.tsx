@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -8,12 +8,13 @@ import AssetTable from '@/components/assets/asset-table';
 import ImportAssetsModal from '@/components/assets/import-assets-modal';
 import Guard from '@/components/auth-guard';
 import { api, type AuthUser } from '@/lib/api';
+import { capsFor, normalizeRole, type AppRole } from '@/lib/roles';
 
 type AssetSummary = {
   id: string;
   tag: string;
   name: string;
-  status?: string;
+  status?: string | null;
 };
 
 type Site = {
@@ -41,48 +42,76 @@ export default function AssetsPage() {
   const [showImport, setShowImport] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
 
-  // ==== Auth / rol ====
   const [me, setMe] = useState<AuthUser | null>(null);
+  const [role, setRole] = useState<AppRole | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
 
     async function loadMe() {
       try {
+        setAuthError(null);
+
         const res = await api.get('/api/auth/me');
         if (!active) return;
-        setMe(res.data as AuthUser);
+
+        const user = res.data as AuthUser;
+        const normalizedRole = normalizeRole(user.role);
+
+        if (typeof window !== 'undefined') {
+          if (normalizedRole) {
+            localStorage.setItem('user_role', normalizedRole);
+          } else {
+            localStorage.removeItem('user_role');
+          }
+        }
+
+        setMe({
+          ...user,
+          role: normalizedRole ?? user.role,
+        });
+
+        setRole(normalizedRole);
       } catch (err) {
         console.error('Error cargando /api/auth/me', err);
+
         if (!active) return;
+
         setMe(null);
+        setRole(null);
+        setAuthError('No se pudo validar la sesión del usuario.');
       } finally {
         if (active) setAuthLoading(false);
       }
     }
 
     loadMe();
+
     return () => {
       active = false;
     };
   }, []);
 
-  const roleUpper = me?.role ? String(me.role).toUpperCase() : undefined;
-  const isDriver = roleUpper === 'CONDUCTOR';
+  const caps = useMemo(() => capsFor(role), [role]);
 
-  // Solo estos roles pueden ver botones de gestión de activos
-  const canManageAssets =
-    roleUpper === 'SUPER_ADMIN' || roleUpper === 'ACTIVOS_FIJOS';
+  const canViewAssets = caps.viewInventory;
+  const canManageAssets = caps.editInventory;
+  const isDriver = role === 'CONDUCTOR';
 
-  // Si es CONDUCTOR, lo mandamos a /routes y no mostramos inventario
   useEffect(() => {
     if (!authLoading && isDriver) {
       router.replace('/routes');
     }
   }, [authLoading, isDriver, router]);
 
-  // ==== Datos para el modal de traslados ====
+  useEffect(() => {
+    if (!authLoading && role && !canViewAssets) {
+      router.replace('/assets');
+    }
+  }, [authLoading, role, canViewAssets, router]);
+
   const [assets, setAssets] = useState<AssetSummary[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
@@ -95,36 +124,48 @@ export default function AssetsPage() {
   const [savingTransfer, setSavingTransfer] = useState(false);
   const [transferError, setTransferError] = useState<string | null>(null);
 
-  // 👉 Barra de búsqueda para activos en el modal de traslados
   const [assetSearch, setAssetSearch] = useState('');
 
-  // 👉 Solo activos EN BODEGA / IN_STOCK
-  const transferableAssets = assets.filter((a) => {
-    const status = String(a.status || '').toUpperCase();
-    return status === 'IN_STOCK' || status === 'EN BODEGA';
+  const transferableAssets = assets.filter((asset) => {
+    const status = String(asset.status || '').trim().toUpperCase();
+    return status === 'IN_STOCK' || status === 'EN_BODEGA' || status === 'EN BODEGA';
   });
 
-  // 👉 Filtro por búsqueda (tag o nombre)
   const normalizedSearch = assetSearch.trim().toLowerCase();
-  const visibleAssets = transferableAssets.filter((a) => {
+
+  const visibleAssets = transferableAssets.filter((asset) => {
     if (!normalizedSearch) return true;
-    const tag = (a.tag || '').toLowerCase();
-    const name = (a.name || '').toLowerCase();
+
+    const tag = String(asset.tag || '').toLowerCase();
+    const name = String(asset.name || '').toLowerCase();
+
     return tag.includes(normalizedSearch) || name.includes(normalizedSearch);
   });
 
-  // Cargar datos cuando se abre el modal de traslados
   useEffect(() => {
     if (!showTransfer || !canManageAssets) return;
 
     const loadData = async () => {
       setLoadingTransferData(true);
       setTransferError(null);
+
       try {
         const [resAssets, resSites, resLocations] = await Promise.all([
-          api.get('/api/assets', { params: { pageSize: 10000 } }),
-          api.get('/api/sites'),
-          api.get('/api/catalog/locations'), // bodegas / ubicaciones
+          api.get('/api/assets', {
+            params: {
+              pageSize: 10000,
+            },
+          }),
+          api.get('/api/sites', {
+            params: {
+              pageSize: 1000,
+            },
+          }),
+          api.get('/api/catalog/locations', {
+            params: {
+              pageSize: 2000,
+            },
+          }),
         ]);
 
         setAssets((resAssets.data?.items ?? []) as AssetSummary[]);
@@ -143,31 +184,48 @@ export default function AssetsPage() {
 
   const toggleAsset = (id: string) => {
     setSelectedAssetIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+      prev.includes(id)
+        ? prev.filter((item) => item !== id)
+        : [...prev, id],
     );
   };
 
-  // Filtrar ubicaciones por sede si el modelo tiene siteId
-  const filteredLocations = locations.filter((loc) => {
-    if (targetSiteId && 'siteId' in loc && loc.siteId) {
-      return loc.siteId === targetSiteId;
+  const filteredLocations = locations.filter((location) => {
+    if (targetSiteId && location.siteId) {
+      return location.siteId === targetSiteId;
     }
+
     return true;
   });
 
-  const handleTransferSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const resetTransferForm = () => {
+    setSelectedAssetIds([]);
+    setTargetSiteId('');
+    setTargetLocationId('');
+    setAssetSearch('');
+    setTransferError(null);
+  };
+
+  const handleTransferSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+
+    if (!canManageAssets) {
+      alert('No tienes permisos para realizar traslados.');
+      return;
+    }
 
     if (!selectedAssetIds.length) {
       alert('Selecciona al menos un activo.');
       return;
     }
+
     if (!targetLocationId) {
       alert('Selecciona la bodega / ubicación destino.');
       return;
     }
 
     setSavingTransfer(true);
+
     try {
       await api.post('/api/movements/bulk-transfer', {
         assetIds: selectedAssetIds,
@@ -176,11 +234,11 @@ export default function AssetsPage() {
       });
 
       setShowTransfer(false);
-      setSelectedAssetIds([]);
-      setTargetSiteId('');
-      setTargetLocationId('');
-      setAssetSearch('');
-      qc.invalidateQueries({ queryKey: ['assets'] });
+      resetTransferForm();
+
+      qc.invalidateQueries({
+        queryKey: ['assets'],
+      });
     } catch (err) {
       console.error(err);
       alert('No se pudo registrar el traslado.');
@@ -191,39 +249,55 @@ export default function AssetsPage() {
 
   const handleCloseTransfer = () => {
     setShowTransfer(false);
-    setAssetSearch('');
+    resetTransferForm();
   };
 
   return (
     <Guard>
-      {/* Mientras validamos auth o redirigimos al conductor */}
       {authLoading || isDriver ? (
         <div className="p-4 text-sm text-slate-500">
           {authLoading ? 'Verificando usuario…' : 'Redirigiendo a rutas…'}
         </div>
+      ) : authError ? (
+        <div className="rounded-xl border bg-white p-4 text-sm text-red-600 dark:bg-slate-900">
+          {authError}
+        </div>
+      ) : !canViewAssets ? (
+        <div className="rounded-xl border bg-white p-4 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+          No tienes permisos para ver inventario.
+        </div>
       ) : (
         <section className="space-y-4">
-          {/* Encabezado con acciones */}
-          <div className="flex items-center justify-between gap-3">
-            <h1 className="text-xl font-semibold">Activos</h1>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-xl font-semibold">Activos</h1>
+
+              {me?.role && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Rol: {me.role}
+                </p>
+              )}
+            </div>
 
             {canManageAssets && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => setShowTransfer(true)}
                   className="rounded-xl border px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
                 >
                   Traslados
                 </button>
+
                 <button
                   onClick={() => setShowImport(true)}
                   className="rounded-xl border px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
                 >
                   Importar CSV
                 </button>
+
                 <Link
                   href="/assets/new"
-                  className="rounded-xl bg-lime-500 text-white px-4 py-2 text-sm hover:bg-lime-600 disabled:opacity-60"
+                  className="rounded-xl bg-lime-500 px-4 py-2 text-sm text-white hover:bg-lime-600"
                 >
                   Crear activo
                 </Link>
@@ -231,43 +305,47 @@ export default function AssetsPage() {
             )}
           </div>
 
-          {/* Tabla */}
           <AssetTable />
 
-          {/* Modal de importación (solo roles que pueden gestionar) */}
           {canManageAssets && (
             <ImportAssetsModal
               open={showImport}
               onOpenChange={setShowImport}
-              onImported={() => qc.invalidateQueries({ queryKey: ['assets'] })}
+              onImported={() =>
+                qc.invalidateQueries({
+                  queryKey: ['assets'],
+                })
+              }
             />
           )}
 
-          {/* Modal de TRASLADOS (solo roles que pueden gestionar) */}
           {canManageAssets && showTransfer && (
-            <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40">
-              <div className="w-full max-w-2xl max-h-[90vh] rounded-xl bg-white p-4 shadow-lg dark:bg-slate-900 flex flex-col">
-                <h2 className="text-base font-semibold mb-3">Traslado de activos</h2>
+            <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-3">
+              <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-xl bg-white p-4 shadow-lg dark:bg-slate-900">
+                <h2 className="mb-3 text-base font-semibold">
+                  Traslado de activos
+                </h2>
 
                 <form
                   onSubmit={handleTransferSubmit}
-                  className="flex flex-col gap-3 flex-1 text-sm"
+                  className="flex flex-1 flex-col gap-3 text-sm"
                 >
-                  <div className="grid gap-4 md:grid-cols-2 max-h-[60vh] overflow-y-auto pr-1">
-                    {/* Columna: selección de activos */}
+                  <div className="grid max-h-[60vh] gap-4 overflow-y-auto pr-1 md:grid-cols-2">
                     <div>
-                      <h3 className="font-medium mb-2 text-sm">Activos en bodega</h3>
-                      <p className="text-xs text-slate-500 mb-2">
-                        Solo se listan activos que están EN BODEGA / IN_STOCK (no asignados).
+                      <h3 className="mb-2 text-sm font-medium">
+                        Activos en bodega
+                      </h3>
+
+                      <p className="mb-2 text-xs text-slate-500">
+                        Solo se listan activos que están EN BODEGA / IN_STOCK.
                       </p>
 
-                      {/* Barra de búsqueda */}
                       <input
                         type="text"
                         placeholder="Buscar por código o nombre…"
                         value={assetSearch}
-                        onChange={(e) => setAssetSearch(e.target.value)}
-                        className="mb-2 w-full rounded border px-2 py-1 text-xs bg-white dark:bg-slate-950"
+                        onChange={(event) => setAssetSearch(event.target.value)}
+                        className="mb-2 w-full rounded border bg-white px-2 py-1 text-xs dark:bg-slate-950"
                       />
 
                       {loadingTransferData && (
@@ -275,6 +353,7 @@ export default function AssetsPage() {
                           Cargando activos…
                         </p>
                       )}
+
                       {transferError && (
                         <p className="text-xs text-red-500">
                           {transferError}
@@ -295,66 +374,74 @@ export default function AssetsPage() {
                           </p>
                         )}
 
-                      <div className="space-y-1 max-h-64 overflow-y-auto border rounded p-2 bg-white dark:bg-slate-950">
-                        {visibleAssets.map((a) => (
+                      <div className="max-h-64 space-y-1 overflow-y-auto rounded border bg-white p-2 dark:bg-slate-950">
+                        {visibleAssets.map((asset) => (
                           <label
-                            key={a.id}
-                            className="flex items-center gap-2 text-xs cursor-pointer"
+                            key={asset.id}
+                            className="flex cursor-pointer items-center gap-2 text-xs"
                           >
                             <input
                               type="checkbox"
                               className="h-3 w-3"
-                              checked={selectedAssetIds.includes(a.id)}
-                              onChange={() => toggleAsset(a.id)}
+                              checked={selectedAssetIds.includes(asset.id)}
+                              onChange={() => toggleAsset(asset.id)}
                             />
+
                             <span className="truncate">
-                              <b>{a.tag}</b>{' — '}{a.name}
+                              <b>{asset.tag}</b> — {asset.name}
                             </span>
                           </label>
                         ))}
                       </div>
                     </div>
 
-                    {/* Columna: destino */}
                     <div className="space-y-3">
                       <div>
-                        <label className="block text-xs text-slate-500 mb-1">
-                          Sede destino (opcional)
+                        <label className="mb-1 block text-xs text-slate-500">
+                          Sede destino opcional
                         </label>
+
                         <select
-                          className="w-full rounded border px-2 py-1.5 text-sm bg-white dark:bg-slate-950"
+                          className="w-full rounded border bg-white px-2 py-1.5 text-sm dark:bg-slate-950"
                           value={targetSiteId}
-                          onChange={(e) => {
-                            setTargetSiteId(e.target.value);
+                          onChange={(event) => {
+                            setTargetSiteId(event.target.value);
                             setTargetLocationId('');
                           }}
                         >
                           <option value="">Selecciona…</option>
-                          {sites.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.name}
-                              {s.code ? ` (${s.code})` : ''}
+
+                          {sites.map((site) => (
+                            <option key={site.id} value={site.id}>
+                              {site.name}
+                              {site.code ? ` (${site.code})` : ''}
                             </option>
                           ))}
                         </select>
                       </div>
 
                       <div>
-                        <label className="block text-xs text-slate-500 mb-1">
-                          Bodega / Ubicación destino
+                        <label className="mb-1 block text-xs text-slate-500">
+                          Bodega / ubicación destino
                         </label>
+
                         <select
-                          className="w-full rounded border px-2 py-1.5 text-sm bg-white dark:bg-slate-950"
+                          className="w-full rounded border bg-white px-2 py-1.5 text-sm dark:bg-slate-950"
                           value={targetLocationId}
-                          onChange={(e) => setTargetLocationId(e.target.value)}
+                          onChange={(event) =>
+                            setTargetLocationId(event.target.value)
+                          }
                           required
                         >
                           <option value="">Selecciona…</option>
-                          {filteredLocations.map((loc) => (
-                            <option key={loc.id} value={loc.id}>
-                              {loc.name}
-                              {loc.code ? ` (${loc.code})` : ''}
-                              {loc.site?.name ? ` — ${loc.site.name}` : ''}
+
+                          {filteredLocations.map((location) => (
+                            <option key={location.id} value={location.id}>
+                              {location.name}
+                              {location.code ? ` (${location.code})` : ''}
+                              {location.site?.name
+                                ? ` — ${location.site.name}`
+                                : ''}
                             </option>
                           ))}
                         </select>
@@ -362,7 +449,6 @@ export default function AssetsPage() {
                     </div>
                   </div>
 
-                  {/* Footer del modal */}
                   <div className="mt-3 flex justify-end gap-2">
                     <button
                       type="button"
@@ -372,6 +458,7 @@ export default function AssetsPage() {
                     >
                       Cancelar
                     </button>
+
                     <button
                       type="submit"
                       disabled={savingTransfer || loadingTransferData}

@@ -5,7 +5,13 @@
   "scripts": {
     "build": "node ./node_modules/next/dist/bin/next build",
     "start": "node ./node_modules/next/dist/bin/next start",
-    "dev": "next dev"
+    "dev": "next dev",
+    "test:e2e:rbac": "playwright test e2e/rbac-ui.spec.ts",
+    "test:e2e:rbac:w2": "PW_WORKERS=2 playwright test e2e/rbac-ui.spec.ts",
+    "test:e2e:rbac:w4": "PW_WORKERS=4 playwright test e2e/rbac-ui.spec.ts",
+    "test:e2e:rbac:w6": "PW_WORKERS=6 playwright test e2e/rbac-ui.spec.ts",
+    "test:e2e:rbac:headed": "PW_WORKERS=1 playwright test e2e/rbac-ui.spec.ts --headed",
+    "test:e2e:report": "playwright show-report"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -32,6 +38,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

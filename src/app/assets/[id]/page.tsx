@@ -1,13 +1,15 @@
 'use client';
 
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { useAsset, useAssetMovements } from '@/lib/asset-hooks';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
-// --- TIPOS Y HELPERS ---
+import Guard from '@/components/auth-guard';
+import { api, type AuthUser } from '@/lib/api';
+import { useAsset, useAssetMovements } from '@/lib/asset-hooks';
+import { capsFor, normalizeRole, type AppRole } from '@/lib/roles';
+
 type AttachmentType = 'SOPORTE_BAJA' | 'FACTURA_COMPRA';
 
 type Attachment = {
@@ -21,22 +23,32 @@ type Attachment = {
   createdAt: string;
 };
 
-function formatBytes(b?: number) {
-  if (!b && b !== 0) return '—';
-  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = b === 0 ? 0 : Math.floor(Math.log(b) / Math.log(1024));
-  return `${(b / Math.pow(1024, i)).toFixed(1)} ${u[i]}`;
+function formatBytes(value?: number) {
+  if (!value && value !== 0) return '—';
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const index = value === 0 ? 0 : Math.floor(Math.log(value) / Math.log(1024));
+
+  return `${(value / Math.pow(1024, index)).toFixed(1)} ${units[index]}`;
 }
 
-function fDate(d?: string | Date | null) {
-  if (!d) return '—';
-  const dt = new Date(d);
-  return isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('es-CO');
+function fDate(value?: string | Date | null) {
+  if (!value) return '—';
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime())
+    ? '—'
+    : date.toLocaleDateString('es-CO');
 }
 
-function formatCurrency(val?: number | null) {
-  if (val == null) return '—';
-  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP' }).format(val);
+function formatCurrency(value?: number | null) {
+  if (value == null) return '—';
+
+  return new Intl.NumberFormat('es-CO', {
+    style: 'currency',
+    currency: 'COP',
+  }).format(value);
 }
 
 function translateMovement(type: string) {
@@ -47,19 +59,36 @@ function translateMovement(type: string) {
     STOCK_IN: 'INGRESO INICIAL',
     STOCK_OUT: 'SALIDA DE INVENTARIO',
     MAINTENANCE_OUT: 'SALIDA A MANTENIMIENTO',
-    MAINTENANCE_IN: 'REGRESO DE MANTENIMIENTO'
+    MAINTENANCE_IN: 'REGRESO DE MANTENIMIENTO',
   };
+
   return map[type] || type;
+}
+
+function getApiBase() {
+  const raw =
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_API_BASE ||
+    'http://localhost:4000';
+
+  return raw.replace(/\/+$/, '');
+}
+
+function isImageUrl(url: string) {
+  return /\.(jpg|jpeg|png|gif|svg|webp)$/i.test(url.split('?')[0] || '');
 }
 
 export default function AssetDetailPage() {
   const params = useParams();
   const id = params?.id as string;
-  const router = useRouter(); 
+
+  const router = useRouter();
   const qc = useQueryClient();
-  
+
   const { data: asset, isLoading, error } = useAsset(id);
-  const { data: movementsData, isLoading: loadingMovements } = useAssetMovements(id);
+  const { data: movementsData, isLoading: loadingMovements } =
+    useAssetMovements(id);
+
   const movements = movementsData?.items || [];
 
   const [mounted, setMounted] = useState(false);
@@ -68,133 +97,362 @@ export default function AssetDetailPage() {
   const [file, setFile] = useState<File | null>(null);
   const [attType, setAttType] = useState<AttachmentType>('FACTURA_COMPRA');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [openDropdown, setOpenDropdown] = useState<string | null>(null); 
-  const [previewFile, setPreviewFile] = useState<{ url: string, name: string, isImage: boolean } | null>(null);
-  
-  // ✅ ESTADO PARA EL ROL DEL USUARIO
-  const [userRole, setUserRole] = useState<string | null>(null);
 
-  const isLocal = typeof window !== 'undefined' && window.location.hostname === 'localhost';
-  const API_BASE = isLocal ? 'http://localhost:4000' : 'https://stockit-uyvn.onrender.com';
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<{
+    url: string;
+    name: string;
+    isImage: boolean;
+  } | null>(null);
+
+  const [role, setRole] = useState<AppRole | null>(null);
+  const [checkingRole, setCheckingRole] = useState(true);
+  const [roleError, setRoleError] = useState<string | null>(null);
+
+  const caps = useMemo(() => capsFor(role), [role]);
+
+  const canViewAsset = caps.viewInventory;
+  const canEditAsset = caps.editInventory;
+  const canManageAttachments = caps.editInventory;
+
+  /**
+   * Regla estricta:
+   * - Editar/importar/crear puede hacerlo INVENTARIO.
+   * - Eliminar activo completo solo SUPER_ADMIN y ACTIVOS_FIJOS.
+   */
+  const canDeleteAsset =
+    role === 'SUPER_ADMIN' || role === 'ACTIVOS_FIJOS';
+
+  const API_BASE = getApiBase();
 
   const getSecureUrl = (rawPath: string) => {
     if (!rawPath) return '';
+
     let clean = rawPath;
+
     if (clean.startsWith('http')) {
-      try { clean = new URL(clean).pathname; } catch (e) {}
+      try {
+        clean = new URL(clean).pathname;
+      } catch {
+        // Se conserva el valor original si no se puede parsear.
+      }
     }
-    const uIdx = clean.indexOf('/uploads/');
-    if (uIdx !== -1) clean = clean.substring(uIdx);
+
+    const uploadIndex = clean.indexOf('/uploads/');
+
+    if (uploadIndex !== -1) {
+      clean = clean.substring(uploadIndex);
+    }
+
     return encodeURI(`${API_BASE}/${clean.replace(/^\/+/, '')}`);
   };
 
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadMe() {
+      try {
+        setRoleError(null);
+
+        const res = await api.get('/api/auth/me');
+        if (!active) return;
+
+        const user = res.data as AuthUser;
+        const normalizedRole = normalizeRole(user.role);
+
+        if (typeof window !== 'undefined') {
+          if (normalizedRole) {
+            localStorage.setItem('user_role', normalizedRole);
+          } else {
+            localStorage.removeItem('user_role');
+          }
+        }
+
+        setRole(normalizedRole);
+      } catch (err) {
+        console.error('Error validando usuario en detalle de activo:', err);
+
+        if (!active) return;
+
+        setRole(null);
+        setRoleError('No se pudo validar la sesión del usuario.');
+      } finally {
+        if (active) {
+          setCheckingRole(false);
+        }
+      }
+    }
+
+    loadMe();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (checkingRole) return;
+
+    if (role === 'CONDUCTOR') {
+      router.replace('/routes');
+      return;
+    }
+
+    if (!canViewAsset) {
+      router.replace('/assets');
+    }
+  }, [checkingRole, role, canViewAsset, router]);
+
   const routeIdsToFetch = useMemo(() => {
     return movements
-      .filter((m: any) => m.reference?.startsWith('ROUTE:'))
-      .map((m: any) => m.reference.replace('ROUTE:', '').trim());
+      .filter((movement: any) => movement.reference?.startsWith('ROUTE:'))
+      .map((movement: any) =>
+        movement.reference.replace('ROUTE:', '').trim(),
+      );
   }, [movements]);
 
   const routesQuery = useQuery({
     queryKey: ['asset-routes-details', routeIdsToFetch],
     queryFn: async () => {
       if (routeIdsToFetch.length === 0) return {};
-      const res = await api.get('/api/routes', { params: { pageSize: 500 } });
-      const routesDict: Record<string, any> = {};
-      res.data?.items?.forEach((r: any) => {
-        routesDict[String(r.routeNumber)] = r; 
+
+      const res = await api.get('/api/routes', {
+        params: {
+          pageSize: 500,
+        },
       });
+
+      const routesDict: Record<string, any> = {};
+
+      res.data?.items?.forEach((route: any) => {
+        routesDict[String(route.routeNumber)] = route;
+      });
+
       return routesDict;
     },
     enabled: routeIdsToFetch.length > 0,
   });
 
   const handoverQuery = useQuery({
-    queryKey: ['handover-details', selectedMovement?.reference, selectedMovement?.notes],
+    queryKey: [
+      'handover-details',
+      selectedMovement?.reference,
+      selectedMovement?.notes,
+    ],
     queryFn: async () => {
-      let hId = null;
+      let handoverId: string | null = null;
+
       if (selectedMovement?.reference?.startsWith('H:')) {
-        hId = selectedMovement.reference.replace('H:', '').trim();
-      } else if (selectedMovement?.notes?.match(/Generada desde Entregas y Recogidas ([a-zA-Z0-9_-]+)/i)) {
-        const match = selectedMovement.notes.match(/Generada desde Entregas y Recogidas ([a-zA-Z0-9_-]+)/i);
-        if (match) hId = match[1].trim();
+        handoverId = selectedMovement.reference.replace('H:', '').trim();
+      } else if (
+        selectedMovement?.notes?.match(
+          /Generada desde Entregas y Recogidas ([a-zA-Z0-9_-]+)/i,
+        )
+      ) {
+        const match = selectedMovement.notes.match(
+          /Generada desde Entregas y Recogidas ([a-zA-Z0-9_-]+)/i,
+        );
+
+        if (match) {
+          handoverId = match[1].trim();
+        }
       }
-      if (!hId) return null;
+
+      if (!handoverId) return null;
+
       try {
-        const res = await api.get(`/api/handover/${hId}`);
+        const res = await api.get(`/api/handover/${handoverId}`);
         return res.data;
-      } catch (e) { return null; }
+      } catch {
+        return null;
+      }
     },
     enabled: !!selectedMovement,
   });
 
   const listAttachmentsQ = useQuery({
     queryKey: ['asset-attachments', id],
-    queryFn: async () => (await api.get<{ items: Attachment[] }>(`/api/assets/${id}/attachments`)).data,
+    queryFn: async () =>
+      (
+        await api.get<{ items: Attachment[] }>(
+          `/api/assets/${id}/attachments`,
+        )
+      ).data,
     enabled: !!id,
   });
 
   const uploadAttachment = useMutation({
     mutationFn: async () => {
-      if (!file) throw new Error('Selecciona un documento PDF o Imagen');
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('type', attType);
-      const res = await api.post(`/api/assets/${id}/attachments`, fd, { headers: { 'Content-Type': 'multipart/form-data' }});
+      if (!canManageAttachments) {
+        throw new Error('No tienes permisos para subir anexos.');
+      }
+
+      if (!file) {
+        throw new Error('Selecciona un documento PDF o imagen.');
+      }
+
+      const formData = new FormData();
+
+      formData.append('file', file);
+      formData.append('type', attType);
+
+      const res = await api.post(`/api/assets/${id}/attachments`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
       return res.data as Attachment;
     },
     onSuccess: () => {
       toast.success('Anexo cargado exitosamente');
+
       setFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      qc.invalidateQueries({ queryKey: ['asset-attachments', id] });
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+
+      qc.invalidateQueries({
+        queryKey: ['asset-attachments', id],
+      });
     },
-    onError: (e: any) => toast.error(e?.response?.data?.error ?? e?.message ?? 'Error al cargar'),
+    onError: (err: any) => {
+      toast.error(
+        err?.response?.data?.error ??
+          err?.message ??
+          'Error al cargar el anexo.',
+      );
+    },
   });
 
   const removeAttachment = useMutation({
-    mutationFn: async (attId: string) => await api.delete(`/api/attachments/${attId}`),
-    onSuccess: () => { toast.success('Anexo eliminado'); qc.invalidateQueries({ queryKey: ['asset-attachments', id] }); },
-    onError: (e: any) => toast.error(e?.response?.data?.error ?? e?.message ?? 'Error al eliminar'),
+    mutationFn: async (attachmentId: string) => {
+      if (!canManageAttachments) {
+        throw new Error('No tienes permisos para eliminar anexos.');
+      }
+
+      return api.delete(`/api/attachments/${attachmentId}`);
+    },
+    onSuccess: () => {
+      toast.success('Anexo eliminado');
+
+      qc.invalidateQueries({
+        queryKey: ['asset-attachments', id],
+      });
+    },
+    onError: (err: any) => {
+      toast.error(
+        err?.response?.data?.error ??
+          err?.message ??
+          'Error al eliminar el anexo.',
+      );
+    },
   });
 
-  // ✅ MUTACIÓN PARA ELIMINAR EL ACTIVO COMPLETO
   const deleteAssetMutation = useMutation({
-    mutationFn: async () => await api.delete(`/api/assets/${id}`),
+    mutationFn: async () => {
+      if (!canDeleteAsset) {
+        throw new Error('No tienes permisos para eliminar activos.');
+      }
+
+      return api.delete(`/api/assets/${id}`);
+    },
     onSuccess: () => {
       toast.success('Activo eliminado exitosamente');
       router.push('/assets');
     },
-    onError: (e: any) => {
-      toast.error(e?.response?.data?.error ?? 'Error al eliminar el activo. Es posible que tenga movimientos asociados.');
+    onError: (err: any) => {
+      toast.error(
+        err?.response?.data?.error ??
+          err?.message ??
+          'Error al eliminar el activo. Es posible que tenga movimientos asociados.',
+      );
     },
   });
 
-  useEffect(() => { 
-    setMounted(true); 
-    // Obtenemos el rol del LocalStorage de forma segura
-    const storedRole = localStorage.getItem('user_role');
-    if (storedRole) {
-      setUserRole(storedRole);
-    }
-  }, []);
-
-  const handleOpenMovement = (mov: any) => { setSelectedMovement(mov); };
+  const handleOpenMovement = (movement: any) => {
+    setSelectedMovement(movement);
+  };
 
   const handlePreview = (rawPath: string, name: string) => {
     const url = getSecureUrl(rawPath);
-    const isImage = !!url.split('?')[0].toLowerCase().match(/\.(jpg|jpeg|png|gif|svg|webp)$/);
-    setPreviewFile({ url, name, isImage });
+
+    setPreviewFile({
+      url,
+      name,
+      isImage: isImageUrl(url),
+    });
   };
 
   const handleDeleteAsset = () => {
-    if (confirm(`¿Estás completamente seguro de que deseas ELIMINAR el activo ${asset?.tag}? Esta acción no se puede deshacer.`)) {
+    if (!canDeleteAsset) {
+      toast.error('No tienes permisos para eliminar activos.');
+      return;
+    }
+
+    const ok = confirm(
+      `¿Estás completamente seguro de que deseas ELIMINAR el activo ${asset?.tag}? Esta acción no se puede deshacer.`,
+    );
+
+    if (ok) {
       deleteAssetMutation.mutate();
     }
   };
 
-  if (!mounted) return <div className="p-8 text-center text-slate-500 font-medium">Iniciando...</div>;
-  if (isLoading) return <div className="p-10 text-center font-bold animate-pulse text-sky-600">Cargando...</div>;
-  if (error || !asset) return <div className="p-10 text-center font-bold text-rose-500">Error al cargar el equipo.</div>;
+  if (!mounted) {
+    return (
+      <Guard>
+        <div className="p-8 text-center text-slate-500 font-medium">
+          Iniciando...
+        </div>
+      </Guard>
+    );
+  }
+
+  if (checkingRole || isLoading) {
+    return (
+      <Guard>
+        <div className="p-10 text-center font-bold animate-pulse text-sky-600">
+          Cargando...
+        </div>
+      </Guard>
+    );
+  }
+
+  if (roleError) {
+    return (
+      <Guard>
+        <div className="rounded-xl border bg-white p-4 text-sm text-red-600 dark:bg-slate-900">
+          {roleError}
+        </div>
+      </Guard>
+    );
+  }
+
+  if (!canViewAsset) {
+    return (
+      <Guard>
+        <div className="rounded-xl border bg-white p-4 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+          No tienes permisos para ver inventario.
+        </div>
+      </Guard>
+    );
+  }
+
+  if (error || !asset) {
+    return (
+      <Guard>
+        <div className="p-10 text-center font-bold text-rose-500">
+          Error al cargar el equipo.
+        </div>
+      </Guard>
+    );
+  }
 
   const status = String(asset.status || 'IN_STOCK');
   const lifeState = String(asset.lifeState || 'ACTIVE');
@@ -208,420 +466,896 @@ export default function AssetDetailPage() {
   let soporteManualName = 'Soporte_Adicional.pdf';
 
   if (selectedMovement) {
-    const explicitPdfMatch = displayNotes.match(/\[PDF\]:\s*(https?:\/\/[^\s]+|\/uploads[^\s]+)/i);
+    const explicitPdfMatch = displayNotes.match(
+      /\[PDF\]:\s*(https?:\/\/[^\s]+|\/uploads[^\s]+)/i,
+    );
 
     if (explicitPdfMatch) {
       pdfUrl = explicitPdfMatch[1];
       displayNotes = displayNotes.replace(explicitPdfMatch[0], '').trim();
-      displayNotes = displayNotes.replace(/^\|\s*/, '').replace(/\s*\|\s*$/, '').trim();
+      displayNotes = displayNotes
+        .replace(/^\|\s*/, '')
+        .replace(/\s*\|\s*$/, '')
+        .trim();
     } else if (selectedMovement?.reference?.startsWith('H:')) {
       const handoverId = selectedMovement.reference.replace('H:', '').trim();
       pdfUrl = `/uploads/handovers/Comodato_${handoverId}.pdf`;
     }
 
     if (handoverQuery.data?.attachmentPath) {
-      const hPath = handoverQuery.data.attachmentPath;
-      if (!hPath.includes('Comodato_')) {
-        soporteManualUrl = hPath;
-        soporteManualName = handoverQuery.data.attachmentName || 'Soporte_Manual';
+      const handoverPath = handoverQuery.data.attachmentPath;
+
+      if (!handoverPath.includes('Comodato_')) {
+        soporteManualUrl = handoverPath;
+        soporteManualName =
+          handoverQuery.data.attachmentName || 'Soporte_Manual';
       }
     }
   }
 
-  const isOldRoute = !pdfUrl && !soporteManualUrl && selectedMovement?.reference?.startsWith('ROUTE:');
+  const isOldRoute =
+    !pdfUrl &&
+    !soporteManualUrl &&
+    selectedMovement?.reference?.startsWith('ROUTE:');
+
   const attachments = listAttachmentsQ.data?.items || [];
-  
-  // ✅ VALIDACIÓN DE ROL CORRECTA E INFALIBLE: Cubre todas las posibles variaciones guardadas en BD o LocalStorage
-  const safeRole = String(userRole || '').toUpperCase().trim();
-  const canDelete = 
-    safeRole === 'SUPER_ADMIN' || 
-    safeRole === 'SUPER ADMIN' || 
-    safeRole === 'ACTIVOS_FIJOS' || 
-    safeRole === 'ACTIVOS FIJOS' ||
-    safeRole === 'ADMIN';
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 font-poppins text-slate-900 pb-20 pt-4 px-4 relative">
-      
-      {/* ENCABEZADO */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-white p-6 rounded-xl border border-slate-200 shadow-sm gap-4">
-        <div className="flex items-center gap-5">
-          {asset.photoUrl ? (
-            <img src={asset.photoUrl} alt="Equipo" className="w-16 h-16 rounded-lg object-cover border shadow-sm" />
-          ) : (
-            <div className="w-16 h-16 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-400">
-              <svg className="w-6 h-6 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-            </div>
-          )}
-          <div>
-            <h1 className="text-2xl font-black tracking-tight text-slate-800 uppercase">{asset.tag || 'SIN TAG'}</h1>
-            <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mt-1">{asset.name || 'EQUIPO NO IDENTIFICADO'}</p>
-          </div>
-        </div>
-        <div className="flex flex-col items-end gap-3">
-          <span className="px-4 py-1.5 rounded-full text-[10px] font-black uppercase shadow-sm border bg-slate-100 text-slate-700 border-slate-300">{status.replace('_', ' ')}</span>
-          <div className="flex gap-2">
-            {/* ✅ BOTÓN DE ELIMINAR VALIDADO CORRECTAMENTE */}
-            {canDelete && (
-              <button 
-                onClick={handleDeleteAsset} 
-                disabled={deleteAssetMutation.isPending}
-                className="bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 hover:border-rose-300 text-[10px] font-bold px-4 py-2 rounded-lg uppercase tracking-widest shadow-sm transition-colors"
-              >
-                {deleteAssetMutation.isPending ? '...' : 'Eliminar'}
-              </button>
-            )}
-            <button onClick={() => router.push(`/assets/${id}/edit`)} className="bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-bold px-5 py-2 rounded-lg uppercase tracking-widest shadow-sm transition-colors">
-              Editar Equipo
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* DATOS DEL EQUIPO */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-        <div className="lg:col-span-2 space-y-6">
-          <section className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-            <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b pb-3 mb-5">Especificaciones Técnicas</h2>
-            <div className="grid gap-6 sm:grid-cols-2 text-sm">
-              <div><p className="text-[10px] font-bold uppercase text-slate-400">Marca</p><p className="font-bold text-slate-800 uppercase">{asset.brand || '—'}</p></div>
-              <div><p className="text-[10px] font-bold uppercase text-slate-400">Modelo</p><p className="font-bold text-slate-800 uppercase">{asset.model || '—'}</p></div>
-              <div><p className="text-[10px] font-bold uppercase text-slate-400">Número de Serie</p><p className="font-black text-slate-800 uppercase">{asset.serial || '—'}</p></div>
-              <div><p className="text-[10px] font-bold uppercase text-slate-400">Registro INVIMA</p><p className="font-bold text-slate-800 uppercase">{asset.invimaCode || '—'}</p></div>
-              <div><p className="text-[10px] font-bold uppercase text-slate-400">Nivel de Riesgo</p><p className="font-bold text-slate-800 uppercase">{riskLevel}</p></div>
-              <div><p className="text-[10px] font-bold uppercase text-slate-400">Categoría</p><p className="font-bold text-slate-800 uppercase">{asset.category?.name || '—'}</p></div>
-            </div>
-          </section>
-
-          <section className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-            <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b pb-3 mb-5">Información Financiera</h2>
-            <div className="grid gap-6 sm:grid-cols-2 text-sm">
-              <div><p className="text-[10px] font-bold uppercase text-slate-400">Tipo de Adquisición</p><p className="font-bold text-slate-800 uppercase">{acqType}</p></div>
-              <div><p className="text-[10px] font-bold uppercase text-slate-400">Costo de Compra</p><p className="font-bold text-emerald-600">{formatCurrency(asset.purchaseCost)}</p></div>
-              <div><p className="text-[10px] font-bold uppercase text-slate-400">Fecha de Compra</p><p className="font-bold text-slate-800">{fDate(asset.purchaseDate)}</p></div>
-              <div><p className="text-[10px] font-bold uppercase text-slate-400">Garantía Hasta</p><p className="font-bold text-slate-800">{fDate(asset.warrantyUntil)}</p></div>
-              <div className="sm:col-span-2"><p className="text-[10px] font-bold uppercase text-slate-400">Proveedor</p><p className="font-bold text-slate-800 uppercase">{asset.supplierName || '—'}</p></div>
-              <div className="sm:col-span-2"><p className="text-[10px] font-bold uppercase text-slate-400">Factura #</p><p className="font-bold text-slate-800 uppercase">{asset.invoiceNumber || '—'}</p></div>
-            </div>
-          </section>
-        </div>
-
-        <div className="space-y-6">
-          <section className="bg-sky-50 border-2 border-sky-100 rounded-xl p-6 shadow-sm">
-            <h2 className="text-xs font-black text-sky-800 uppercase tracking-widest border-b border-sky-200 pb-3 mb-5">Ubicación Actual</h2>
-            <div className="space-y-4 text-sm">
-              {status === 'ASSIGNED' ? (
-                <>
-                  <div><p className="text-[10px] font-bold uppercase text-sky-600 mb-1">Custodio / Paciente</p><p className="font-black text-slate-800 uppercase text-lg leading-tight">{asset.currentCustodian?.fullName || 'NO ASIGNADO'}</p><p className="text-xs font-bold text-slate-500 mt-1">CC: {asset.currentCustodian?.documentId || '—'}</p></div>
-                  <div className="border-t border-sky-200 pt-3"><p className="text-[10px] font-bold uppercase text-sky-600 mb-1">Bodega de Origen</p><p className="font-bold text-slate-700 uppercase">{asset.assignedWarehouse?.name || '—'}</p></div>
-                </>
-              ) : (
-                <>
-                  <div><p className="text-[10px] font-bold uppercase text-sky-600 mb-1">Bodega Física</p><p className="font-black text-slate-800 uppercase text-lg leading-tight">{asset.currentLocation?.name || asset.assignedWarehouse?.name || 'SIN BODEGA'}</p></div>
-                  <div className="border-t border-sky-200 pt-3"><p className="text-[10px] font-bold uppercase text-sky-600 mb-1">Sede Institucional</p><p className="font-bold text-slate-700 uppercase">{asset.site?.name || '—'}</p></div>
-                </>
-              )}
-            </div>
-          </section>
-
-          <section className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-            <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b pb-3 mb-5">Mantenimiento</h2>
-            <div className="space-y-4 text-sm">
-              <div><p className="text-[10px] font-bold uppercase text-slate-400">Frecuencia</p><p className="font-bold text-slate-800 uppercase">{maintFreq}</p></div>
-              <div><p className="text-[10px] font-bold uppercase text-slate-400">Estado de Vida Útil</p><p className="font-bold text-slate-800 uppercase">{lifeState}</p></div>
-              {asset.notes && (
-                 <div className="border-t pt-3"><p className="text-[10px] font-bold uppercase text-slate-400 mb-1">Notas / Observaciones</p><p className="text-xs text-slate-600">{asset.notes}</p></div>
-              )}
-            </div>
-          </section>
-        </div>
-      </div>
-
-      {/* ANEXOS DEL EQUIPO */}
-      <div className="mt-10">
-        <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-4">Documentos y Anexos</h2>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          <div className="bg-slate-50 rounded-2xl border border-slate-200 shadow-sm p-6 flex flex-col gap-4">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-200 pb-3">Subir Nuevo Anexo</h3>
-            <select value={attType} onChange={(e) => setAttType(e.target.value as AttachmentType)} className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm bg-white outline-none">
-              <option value="FACTURA_COMPRA">Factura de Compra</option>
-              <option value="SOPORTE_BAJA">Soporte de Baja</option>
-            </select>
-            <input ref={fileInputRef} type="file" accept="application/pdf,image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs bg-white cursor-pointer w-full" />
-            <button onClick={() => uploadAttachment.mutate()} disabled={uploadAttachment.isPending || !file} className="w-full mt-2 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest py-3 shadow-lg hover:bg-slate-800 disabled:opacity-50">
-              {uploadAttachment.isPending ? 'Subiendo...' : 'Guardar Anexo'}
-            </button>
-          </div>
-          
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-200 pb-3 mb-4 flex justify-between items-center">
-              <span>Archivos Guardados</span>
-              <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-[10px]">{attachments.length}</span>
-            </h3>
-            
-            {listAttachmentsQ.isLoading ? (
-              <div className="text-sm font-bold text-slate-400 uppercase tracking-widest animate-pulse py-4">Cargando anexos...</div>
-            ) : attachments.length === 0 ? (
-              <div className="text-sm font-medium text-slate-500 border-2 border-dashed border-slate-200 rounded-xl p-8 text-center bg-slate-50">
-                No hay documentos anexos cargados para este equipo.
-              </div>
+    <Guard>
+      <div className="mx-auto max-w-5xl space-y-6 font-poppins text-slate-900 pb-20 pt-4 px-4 relative">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-white p-6 rounded-xl border border-slate-200 shadow-sm gap-4">
+          <div className="flex items-center gap-5">
+            {asset.photoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={asset.photoUrl}
+                alt="Equipo"
+                className="w-16 h-16 rounded-lg object-cover border shadow-sm"
+              />
             ) : (
-              <ul className="space-y-3">
-                {attachments.map((att) => {
-                  let downloadUrl = att.path;
-                  if (downloadUrl.startsWith('http')) {
-                    try { downloadUrl = new URL(downloadUrl).pathname; } catch(e) {}
-                  }
-                  const uIdx = downloadUrl.indexOf('/uploads/');
-                  if (uIdx !== -1) downloadUrl = downloadUrl.substring(uIdx);
-                  downloadUrl = `${API_BASE}/${downloadUrl.replace(/^\/+/, '')}`;
-
-                  const isDropdownOpen = openDropdown === att.id;
-                  
-                  return (
-                    <li key={att.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 sm:p-4 flex items-center justify-between gap-3 hover:shadow-sm transition-shadow relative">
-                      <div onClick={() => handlePreview(att.path, att.fileName)} className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer hover:opacity-80 transition-opacity">
-                         <div className="min-w-0 flex-1">
-                           <p className="text-sm font-bold text-slate-800 uppercase tracking-tight truncate">{att.type === 'SOPORTE_BAJA' ? 'SOPORTE DE BAJA' : 'FACTURA DE COMPRA'}</p>
-                           <p className="text-[10px] text-slate-500 font-medium truncate" title={att.fileName}>{att.fileName} • {formatBytes(att.size)} • {new Date(att.createdAt).toLocaleDateString('es-CO')}</p>
-                         </div>
-                      </div>
-
-                      <div className="relative shrink-0">
-                        <button onClick={(e) => { e.stopPropagation(); setOpenDropdown(isDropdownOpen ? null : att.id); }} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-full transition-colors focus:outline-none font-bold text-xs uppercase bg-slate-100 border border-slate-200">
-                          Opciones
-                        </button>
-                        {isDropdownOpen && <div className="fixed inset-0 z-30" onClick={() => setOpenDropdown(null)} />}
-                        {isDropdownOpen && (
-                          <div className="absolute right-0 top-10 mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-xl z-40 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-                            <a href={downloadUrl} download={att.fileName} onClick={() => setOpenDropdown(null)} className="block px-4 py-3 text-xs font-bold text-slate-700 hover:bg-slate-50 w-full text-left">
-                              Descargar Archivo
-                            </a>
-                            <button onClick={() => { setOpenDropdown(null); if (confirm('¿Estás seguro de eliminar este documento anexo?')) removeAttachment.mutate(att.id); }} className="block px-4 py-3 text-xs font-bold text-rose-600 hover:bg-rose-50 border-t border-slate-100 w-full text-left">
-                              Eliminar Anexo
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
+              <div className="w-16 h-16 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-400">
+                <svg
+                  className="w-6 h-6 opacity-60"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  />
+                </svg>
+              </div>
             )}
+
+            <div>
+              <h1 className="text-2xl font-black tracking-tight text-slate-800 uppercase">
+                {asset.tag || 'SIN TAG'}
+              </h1>
+
+              <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mt-1">
+                {asset.name || 'EQUIPO NO IDENTIFICADO'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col items-end gap-3">
+            <span className="px-4 py-1.5 rounded-full text-[10px] font-black uppercase shadow-sm border bg-slate-100 text-slate-700 border-slate-300">
+              {status.replace('_', ' ')}
+            </span>
+
+            <div className="flex gap-2">
+              {canDeleteAsset && (
+                <button
+                  onClick={handleDeleteAsset}
+                  disabled={deleteAssetMutation.isPending}
+                  className="bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 hover:border-rose-300 text-[10px] font-bold px-4 py-2 rounded-lg uppercase tracking-widest shadow-sm transition-colors disabled:opacity-60"
+                >
+                  {deleteAssetMutation.isPending ? '...' : 'Eliminar'}
+                </button>
+              )}
+
+              {canEditAsset && (
+                <button
+                  onClick={() => router.push(`/assets/${id}/edit`)}
+                  className="bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-bold px-5 py-2 rounded-lg uppercase tracking-widest shadow-sm transition-colors"
+                >
+                  Editar Equipo
+                </button>
+              )}
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* HISTORIAL DE MOVIMIENTOS */}
-      <div className="mt-10">
-        <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-4">Historial de Movimientos</h2>
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8">
-          
-          {loadingMovements ? (
-            <p className="text-sm font-bold text-slate-400 uppercase tracking-widest animate-pulse">Cargando historial...</p>
-          ) : movements.length === 0 ? (
-            <p className="text-sm font-medium text-slate-500 border-2 border-dashed border-slate-200 rounded-xl p-8 text-center bg-slate-50">No hay movimientos registrados para este equipo.</p>
-          ) : (
-            <div className="space-y-6">
-              {movements.map((mov: any) => {
-                let scheduledDateStr = null;
-                if (mov.reference?.startsWith('ROUTE:')) {
-                  const rNum = mov.reference.replace('ROUTE:', '').trim();
-                  const rData = routesQuery.data?.[rNum];
-                  if (rData && rData.scheduledDate) {
-                    scheduledDateStr = new Date(rData.scheduledDate).toLocaleDateString('es-CO');
-                  }
-                }
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+          <div className="lg:col-span-2 space-y-6">
+            <section className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+              <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b pb-3 mb-5">
+                Especificaciones Técnicas
+              </h2>
 
-                return (
-                  <div key={mov.id} className="relative pl-6 border-l-2 border-slate-100 last:border-l-transparent pb-2 last:pb-0 group">
-                    <div className="absolute w-4 h-4 bg-sky-500 rounded-full -left-[9px] top-1 border-[3px] border-white shadow-sm group-hover:bg-sky-600 transition-colors"></div>
-                    
-                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-2 gap-1">
-                      <span className="text-[11px] font-black text-sky-700 uppercase tracking-widest bg-sky-50 px-3 py-1 rounded w-fit border border-sky-100">
-                        {translateMovement(mov.type)}
-                      </span>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase">
-                        Realizado: {new Date(mov.createdAt).toLocaleString('es-CO')}
-                      </span>
-                    </div>
+              <div className="grid gap-6 sm:grid-cols-2 text-sm">
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Marca
+                  </p>
+                  <p className="font-bold text-slate-800 uppercase">
+                    {asset.brand || '—'}
+                  </p>
+                </div>
 
-                    <div 
-                      onClick={() => handleOpenMovement(mov)}
-                      className="bg-white border border-slate-200 p-4 rounded-xl text-sm text-slate-700 mt-2 shadow-sm hover:shadow-md hover:border-sky-300 transition-all cursor-pointer flex justify-between items-center"
-                    >
-                      <div className="space-y-1 w-full">
-                        {mov.type === 'ASSIGN' && <p>Entregado a: <span className="font-bold uppercase text-slate-900">{mov.toPerson?.fullName || '—'}</span></p>}
-                        {mov.type === 'RETURN' && <p>Recogido de: <span className="font-bold uppercase text-slate-900">{mov.fromPerson?.fullName || '—'}</span></p>}
-                        {mov.type === 'TRANSFER' && <p>Trasladado hacia <span className="font-bold uppercase text-slate-900">{mov.toLocation?.name || '—'}</span></p>}
-                        {mov.type === 'STOCK_IN' && <p>Ingresado a: <span className="font-bold uppercase text-slate-900">{mov.toLocation?.name || '—'}</span></p>}
-                        
-                        {scheduledDateStr && (
-                          <p className="text-[11px] font-bold text-sky-700 mt-2 bg-sky-50 inline-block px-2 py-0.5 rounded border border-sky-100">
-                            Programada: {scheduledDateStr}
-                          </p>
-                        )}
-                        <p className="text-[10px] text-slate-400 font-bold uppercase mt-2">Registrado por: {mov.createdBy?.name || 'Sistema'}</p>
-                      </div>
-                      <div className="text-sky-500 font-bold text-[10px] uppercase tracking-widest whitespace-nowrap pl-4 hidden sm:block bg-slate-50 px-3 py-1.5 rounded border border-slate-200">
-                        Ver Detalles
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Modelo
+                  </p>
+                  <p className="font-bold text-slate-800 uppercase">
+                    {asset.model || '—'}
+                  </p>
+                </div>
 
-      {/* VISOR ÚNICO DE PDF / IMÁGENES GIGANTE */}
-      {previewFile && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/90 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in">
-          <div className="bg-slate-800 w-full max-w-5xl h-[95vh] rounded-2xl flex flex-col shadow-2xl overflow-hidden border border-slate-700">
-             
-             <div className="p-3 sm:p-4 bg-slate-900 flex items-center justify-between shadow-md z-10 border-b border-slate-800">
-               <div className="flex items-center gap-2 sm:gap-4">
-                 <button onClick={() => setPreviewFile(null)} className="text-[10px] font-bold text-white uppercase tracking-widest hover:text-sky-300 flex items-center gap-1 transition-colors bg-slate-800 px-3 py-2 rounded-lg border border-slate-700">
-                   Cerrar Visor
-                 </button>
-                 <span className="text-white text-[11px] sm:text-xs font-bold truncate max-w-[130px] sm:max-w-md">{previewFile.name}</span>
-               </div>
-               <a href={previewFile.url} download target="_blank" rel="noopener noreferrer" className="text-[10px] bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 sm:px-5 sm:py-2.5 rounded-lg uppercase font-black tracking-widest transition-colors shadow-lg">
-                 Descargar
-               </a>
-             </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Número de Serie
+                  </p>
+                  <p className="font-black text-slate-800 uppercase">
+                    {asset.serial || '—'}
+                  </p>
+                </div>
 
-             <div className="flex-1 w-full h-full overflow-hidden p-2 sm:p-6 bg-slate-300 flex flex-col items-center justify-center relative">
-               {previewFile.isImage ? (
-                  <img src={previewFile.url} alt={previewFile.name} className="max-w-full max-h-full object-contain rounded-xl shadow-2xl bg-white" />
-               ) : (
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Registro INVIMA
+                  </p>
+                  <p className="font-bold text-slate-800 uppercase">
+                    {asset.invimaCode || '—'}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Nivel de Riesgo
+                  </p>
+                  <p className="font-bold text-slate-800 uppercase">
+                    {riskLevel}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Categoría
+                  </p>
+                  <p className="font-bold text-slate-800 uppercase">
+                    {asset.category?.name || '—'}
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <section className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+              <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b pb-3 mb-5">
+                Información Financiera
+              </h2>
+
+              <div className="grid gap-6 sm:grid-cols-2 text-sm">
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Tipo de Adquisición
+                  </p>
+                  <p className="font-bold text-slate-800 uppercase">
+                    {acqType}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Costo de Compra
+                  </p>
+                  <p className="font-bold text-emerald-600">
+                    {formatCurrency(asset.purchaseCost)}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Fecha de Compra
+                  </p>
+                  <p className="font-bold text-slate-800">
+                    {fDate(asset.purchaseDate)}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Garantía Hasta
+                  </p>
+                  <p className="font-bold text-slate-800">
+                    {fDate(asset.warrantyUntil)}
+                  </p>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Proveedor
+                  </p>
+                  <p className="font-bold text-slate-800 uppercase">
+                    {asset.supplierName || '—'}
+                  </p>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Factura #
+                  </p>
+                  <p className="font-bold text-slate-800 uppercase">
+                    {asset.invoiceNumber || '—'}
+                  </p>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div className="space-y-6">
+            <section className="bg-sky-50 border-2 border-sky-100 rounded-xl p-6 shadow-sm">
+              <h2 className="text-xs font-black text-sky-800 uppercase tracking-widest border-b border-sky-200 pb-3 mb-5">
+                Ubicación Actual
+              </h2>
+
+              <div className="space-y-4 text-sm">
+                {status === 'ASSIGNED' ? (
                   <>
-                    <iframe src={`${previewFile.url}#view=FitH`} className="hidden sm:block w-full flex-1 rounded-xl shadow-2xl bg-white border-0" title={previewFile.name} />
-                    
-                    <div className="sm:hidden w-full flex-1 flex flex-col items-center justify-center bg-white rounded-xl shadow-2xl p-6 text-center border-2 border-dashed border-slate-300">
-                       <h3 className="text-base font-black text-slate-800 mb-2 uppercase">Documento PDF</h3>
-                       <p className="text-slate-500 text-xs mb-6">Tu navegador móvil requiere abrir el PDF en otra pestaña para poder leerlo.</p>
-                       <a href={previewFile.url} target="_blank" rel="noopener noreferrer" className="w-full bg-sky-600 text-white px-4 py-4 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg">
-                          Abrir Documento Original
-                       </a>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase text-sky-600 mb-1">
+                        Custodio / Paciente
+                      </p>
+
+                      <p className="font-black text-slate-800 uppercase text-lg leading-tight">
+                        {asset.currentCustodian?.fullName || 'NO ASIGNADO'}
+                      </p>
+
+                      <p className="text-xs font-bold text-slate-500 mt-1">
+                        CC: {asset.currentCustodian?.documentId || '—'}
+                      </p>
+                    </div>
+
+                    <div className="border-t border-sky-200 pt-3">
+                      <p className="text-[10px] font-bold uppercase text-sky-600 mb-1">
+                        Bodega de Origen
+                      </p>
+
+                      <p className="font-bold text-slate-700 uppercase">
+                        {asset.assignedWarehouse?.name || '—'}
+                      </p>
                     </div>
                   </>
-               )}
-             </div>
-          </div>
-        </div>
-      )}
+                ) : (
+                  <>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase text-sky-600 mb-1">
+                        Bodega Física
+                      </p>
 
-      {/* MODAL DE DETALLES DEL MOVIMIENTO */}
-      {selectedMovement && !previewFile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in">
-          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[95vh] flex flex-col shadow-2xl overflow-hidden transition-all duration-300">
-            
-            <div className="p-4 sm:p-5 border-b flex justify-between items-center bg-slate-50">
-              <div>
-                <h2 className="text-base sm:text-lg font-black text-slate-800 uppercase tracking-tight">Detalle del Movimiento</h2>
-                <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 tracking-widest uppercase mt-1">Registrado el: {new Date(selectedMovement.createdAt).toLocaleString('es-CO')}</p>
+                      <p className="font-black text-slate-800 uppercase text-lg leading-tight">
+                        {asset.currentLocation?.name ||
+                          asset.assignedWarehouse?.name ||
+                          'SIN BODEGA'}
+                      </p>
+                    </div>
+
+                    <div className="border-t border-sky-200 pt-3">
+                      <p className="text-[10px] font-bold uppercase text-sky-600 mb-1">
+                        Sede Institucional
+                      </p>
+
+                      <p className="font-bold text-slate-700 uppercase">
+                        {asset.site?.name || '—'}
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
-              <button onClick={() => setSelectedMovement(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300 font-bold">✕</button>
-            </div>
+            </section>
 
-            <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4 sm:space-y-6">
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Tipo de Movimiento</p>
-                  <p className="text-sm font-black uppercase text-sky-700">{translateMovement(selectedMovement.type)}</p>
-                </div>
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Autor de Gestión</p>
-                  <p className="text-sm font-bold text-slate-700 uppercase truncate">{selectedMovement.createdBy?.name || 'Sistema'}</p>
-                </div>
-              </div>
+            <section className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+              <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b pb-3 mb-5">
+                Mantenimiento
+              </h2>
 
-              <div className="border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-2">Información de Origen y Destino</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Origen</p>
-                    {selectedMovement.fromPerson ? (
-                       <p className="font-bold text-slate-800 uppercase">{selectedMovement.fromPerson.fullName} <span className="block text-xs text-slate-500 mt-0.5">Doc: {selectedMovement.fromPerson.documentId || '—'}</span></p>
-                    ) : selectedMovement.fromLocation ? (
-                       <p className="font-bold text-slate-800 uppercase">{selectedMovement.fromLocation.name}</p>
-                    ) : (
-                       <p className="text-slate-400 uppercase font-medium text-xs">No aplica</p>
-                    )}
-                  </div>
-                  <div>
-                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Destino</p>
-                    {selectedMovement.toPerson ? (
-                       <p className="font-bold text-slate-800 uppercase">{selectedMovement.toPerson.fullName} <span className="block text-xs text-slate-500 mt-0.5">Doc: {selectedMovement.toPerson.documentId || '—'}</span></p>
-                    ) : selectedMovement.toLocation ? (
-                       <p className="font-bold text-slate-800 uppercase">{selectedMovement.toLocation.name}</p>
-                    ) : (
-                       <p className="text-slate-400 uppercase font-medium text-xs">No aplica</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4">
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-2">Soporte y Validación</h3>
+              <div className="space-y-4 text-sm">
                 <div>
-                   <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Firma o Trazo de Conformidad</p>
-                   {selectedMovement.signatureData?.startsWith('data:image') ? (
-                     <img src={selectedMovement.signatureData} alt="Firma" className="h-20 border rounded bg-white p-2 object-contain shadow-sm" />
-                   ) : (
-                     <p className="text-[10px] font-bold italic text-slate-500 uppercase bg-white p-3 rounded border border-slate-200">{selectedMovement.signatureData || 'Sin firma registrada'}</p>
-                   )}
-                </div>
-                
-                {displayNotes && (
-                  <div className="mt-4 pt-4 border-t border-slate-200">
-                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Notas Adicionales</p>
-                    <p className="text-xs text-slate-600 italic bg-white p-3 rounded border border-slate-200">{displayNotes}</p>
-                  </div>
-                )}
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Frecuencia
+                  </p>
 
-                {(pdfUrl || soporteManualUrl) && (
-                  <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {pdfUrl && (
-                      <button 
-                        onClick={() => handlePreview(pdfUrl as string, 'Comodato_Original.pdf')} 
-                        className={`w-full flex items-center justify-center bg-indigo-50 border-2 border-indigo-200 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 transition-all font-black uppercase text-[11px] sm:text-xs tracking-widest py-3 rounded-xl shadow-sm gap-2 ${!soporteManualUrl ? 'sm:col-span-2' : ''}`}
-                      >
-                        Ver Comodato
-                      </button>
-                    )}
-                    {soporteManualUrl && (
-                      <button 
-                        onClick={() => handlePreview(soporteManualUrl as string, soporteManualName)} 
-                        className={`w-full flex items-center justify-center bg-emerald-50 border-2 border-emerald-200 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300 transition-all font-black uppercase text-[11px] sm:text-xs tracking-widest py-3 rounded-xl shadow-sm gap-2 ${!pdfUrl ? 'sm:col-span-2' : ''}`}
-                      >
-                        Soporte Adicional
-                      </button>
-                    )}
-                  </div>
-                )}
-                
-                {isOldRoute && (
-                  <div className="mt-4 pt-4 border-t border-slate-200">
-                     <p className="text-[10px] text-slate-500 font-medium italic text-center p-3 bg-slate-100 rounded-lg">El comodato de esta ruta antigua no está enlazado directamente.</p>
+                  <p className="font-bold text-slate-800 uppercase">
+                    {maintFreq}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-slate-400">
+                    Estado de Vida Útil
+                  </p>
+
+                  <p className="font-bold text-slate-800 uppercase">
+                    {lifeState}
+                  </p>
+                </div>
+
+                {asset.notes && (
+                  <div className="border-t pt-3">
+                    <p className="text-[10px] font-bold uppercase text-slate-400 mb-1">
+                      Notas / Observaciones
+                    </p>
+
+                    <p className="text-xs text-slate-600">{asset.notes}</p>
                   </div>
                 )}
               </div>
-            </div>
-            
-            <div className="p-4 border-t bg-slate-50 flex justify-end">
-              <button onClick={() => setSelectedMovement(null)} className="w-full sm:w-auto px-6 py-3 sm:py-2 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg hover:bg-slate-800 transition-colors">
-                Cerrar Detalles
-              </button>
-            </div>
-            
+            </section>
           </div>
         </div>
-      )}
 
-    </div>
+        <div className="mt-10">
+          <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-4">
+            Documentos y Anexos
+          </h2>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            {canManageAttachments && (
+              <div className="bg-slate-50 rounded-2xl border border-slate-200 shadow-sm p-6 flex flex-col gap-4">
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-200 pb-3">
+                  Subir Nuevo Anexo
+                </h3>
+
+                <select
+                  value={attType}
+                  onChange={(event) =>
+                    setAttType(event.target.value as AttachmentType)
+                  }
+                  className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm bg-white outline-none"
+                >
+                  <option value="FACTURA_COMPRA">Factura de Compra</option>
+                  <option value="SOPORTE_BAJA">Soporte de Baja</option>
+                </select>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/pdf,image/*"
+                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                  className="rounded-xl border border-slate-300 px-3 py-2 text-xs bg-white cursor-pointer w-full"
+                />
+
+                <button
+                  onClick={() => uploadAttachment.mutate()}
+                  disabled={uploadAttachment.isPending || !file}
+                  className="w-full mt-2 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest py-3 shadow-lg hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {uploadAttachment.isPending
+                    ? 'Subiendo...'
+                    : 'Guardar Anexo'}
+                </button>
+              </div>
+            )}
+
+            <div
+              className={`bg-white rounded-2xl border border-slate-200 shadow-sm p-6 ${
+                canManageAttachments ? 'lg:col-span-2' : 'lg:col-span-3'
+              }`}
+            >
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-200 pb-3 mb-4 flex justify-between items-center">
+                <span>Archivos Guardados</span>
+                <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-[10px]">
+                  {attachments.length}
+                </span>
+              </h3>
+
+              {listAttachmentsQ.isLoading ? (
+                <div className="text-sm font-bold text-slate-400 uppercase tracking-widest animate-pulse py-4">
+                  Cargando anexos...
+                </div>
+              ) : attachments.length === 0 ? (
+                <div className="text-sm font-medium text-slate-500 border-2 border-dashed border-slate-200 rounded-xl p-8 text-center bg-slate-50">
+                  No hay documentos anexos cargados para este equipo.
+                </div>
+              ) : (
+                <ul className="space-y-3">
+                  {attachments.map((attachment) => {
+                    let downloadUrl = attachment.path;
+
+                    if (downloadUrl.startsWith('http')) {
+                      try {
+                        downloadUrl = new URL(downloadUrl).pathname;
+                      } catch {
+                        // Se conserva el valor original.
+                      }
+                    }
+
+                    const uploadIndex = downloadUrl.indexOf('/uploads/');
+
+                    if (uploadIndex !== -1) {
+                      downloadUrl = downloadUrl.substring(uploadIndex);
+                    }
+
+                    downloadUrl = `${API_BASE}/${downloadUrl.replace(
+                      /^\/+/,
+                      '',
+                    )}`;
+
+                    const isDropdownOpen = openDropdown === attachment.id;
+
+                    return (
+                      <li
+                        key={attachment.id}
+                        className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-center justify-between gap-3"
+                      >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handlePreview(attachment.path, attachment.fileName)
+                          }
+                          className="min-w-0 text-left flex-1"
+                        >
+                          <p className="text-sm font-bold text-slate-800 truncate">
+                            {attachment.fileName}
+                          </p>
+
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">
+                            {attachment.type} · {formatBytes(attachment.size)} ·{' '}
+                            {fDate(attachment.createdAt)}
+                          </p>
+                        </button>
+
+                        <div className="relative shrink-0">
+                          <button
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setOpenDropdown(
+                                isDropdownOpen ? null : attachment.id,
+                              );
+                            }}
+                            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-full transition-colors focus:outline-none font-bold text-xs uppercase bg-slate-100 border border-slate-200"
+                          >
+                            Opciones
+                          </button>
+
+                          {isDropdownOpen && (
+                            <div
+                              className="fixed inset-0 z-30"
+                              onClick={() => setOpenDropdown(null)}
+                            />
+                          )}
+
+                          {isDropdownOpen && (
+                            <div className="absolute right-0 top-10 mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-xl z-40 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                              <a
+                                href={downloadUrl}
+                                download={attachment.fileName}
+                                onClick={() => setOpenDropdown(null)}
+                                className="block px-4 py-3 text-xs font-bold text-slate-700 hover:bg-slate-50 w-full text-left"
+                              >
+                                Descargar Archivo
+                              </a>
+
+                              {canManageAttachments && (
+                                <button
+                                  onClick={() => {
+                                    setOpenDropdown(null);
+
+                                    const ok = confirm(
+                                      '¿Estás seguro de eliminar este documento anexo?',
+                                    );
+
+                                    if (ok) {
+                                      removeAttachment.mutate(attachment.id);
+                                    }
+                                  }}
+                                  className="block px-4 py-3 text-xs font-bold text-rose-600 hover:bg-rose-50 border-t border-slate-100 w-full text-left"
+                                >
+                                  Eliminar Anexo
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-10">
+          <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-4">
+            Historial de Movimientos
+          </h2>
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8">
+            {loadingMovements ? (
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-widest animate-pulse">
+                Cargando historial...
+              </p>
+            ) : movements.length === 0 ? (
+              <p className="text-sm font-medium text-slate-500 border-2 border-dashed border-slate-200 rounded-xl p-8 text-center bg-slate-50">
+                No hay movimientos registrados para este equipo.
+              </p>
+            ) : (
+              <div className="space-y-6">
+                {movements.map((movement: any) => {
+                  let scheduledDateStr: string | null = null;
+
+                  if (movement.reference?.startsWith('ROUTE:')) {
+                    const routeNumber = movement.reference
+                      .replace('ROUTE:', '')
+                      .trim();
+
+                    const routeData = routesQuery.data?.[routeNumber];
+
+                    if (routeData?.scheduledDate) {
+                      scheduledDateStr = new Date(
+                        routeData.scheduledDate,
+                      ).toLocaleDateString('es-CO');
+                    }
+                  }
+
+                  return (
+                    <div
+                      key={movement.id}
+                      className="relative pl-6 border-l-2 border-slate-100 last:border-l-transparent pb-2 last:pb-0 group"
+                    >
+                      <div className="absolute w-4 h-4 bg-sky-500 rounded-full -left-[9px] top-1 border-[3px] border-white shadow-sm group-hover:bg-sky-600 transition-colors" />
+
+                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-2 gap-1">
+                        <span className="text-[11px] font-black text-sky-700 uppercase tracking-widest bg-sky-50 px-3 py-1 rounded w-fit border border-sky-100">
+                          {translateMovement(movement.type)}
+                        </span>
+
+                        <span className="text-[10px] font-bold text-slate-400 uppercase">
+                          Realizado:{' '}
+                          {new Date(movement.createdAt).toLocaleString('es-CO')}
+                        </span>
+                      </div>
+
+                      <div
+                        onClick={() => handleOpenMovement(movement)}
+                        className="bg-white border border-slate-200 p-4 rounded-xl text-sm text-slate-700 mt-2 shadow-sm hover:shadow-md hover:border-sky-300 transition-all cursor-pointer flex justify-between items-center"
+                      >
+                        <div className="space-y-1 w-full">
+                          {movement.type === 'ASSIGN' && (
+                            <p>
+                              Entregado a:{' '}
+                              <span className="font-bold uppercase text-slate-900">
+                                {movement.toPerson?.fullName || '—'}
+                              </span>
+                            </p>
+                          )}
+
+                          {movement.type === 'RETURN' && (
+                            <p>
+                              Recogido de:{' '}
+                              <span className="font-bold uppercase text-slate-900">
+                                {movement.fromPerson?.fullName || '—'}
+                              </span>
+                            </p>
+                          )}
+
+                          {movement.type === 'TRANSFER' && (
+                            <p>
+                              Trasladado hacia{' '}
+                              <span className="font-bold uppercase text-slate-900">
+                                {movement.toLocation?.name || '—'}
+                              </span>
+                            </p>
+                          )}
+
+                          {movement.type === 'STOCK_IN' && (
+                            <p>
+                              Ingresado a:{' '}
+                              <span className="font-bold uppercase text-slate-900">
+                                {movement.toLocation?.name || '—'}
+                              </span>
+                            </p>
+                          )}
+
+                          {scheduledDateStr && (
+                            <p className="text-[11px] font-bold text-sky-700 mt-2 bg-sky-50 inline-block px-2 py-0.5 rounded border border-sky-100">
+                              Programada: {scheduledDateStr}
+                            </p>
+                          )}
+
+                          <p className="text-[10px] text-slate-400 font-bold uppercase mt-2">
+                            Registrado por:{' '}
+                            {movement.createdBy?.name || 'Sistema'}
+                          </p>
+                        </div>
+
+                        <div className="text-sky-500 font-bold text-[10px] uppercase tracking-widest whitespace-nowrap pl-4 hidden sm:block bg-slate-50 px-3 py-1.5 rounded border border-slate-200">
+                          Ver Detalles
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {previewFile && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/90 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in">
+            <div className="bg-slate-800 w-full max-w-5xl h-[95vh] rounded-2xl flex flex-col shadow-2xl overflow-hidden border border-slate-700">
+              <div className="p-3 sm:p-4 bg-slate-900 flex items-center justify-between shadow-md z-10 border-b border-slate-800">
+                <div className="flex items-center gap-2 sm:gap-4">
+                  <button
+                    onClick={() => setPreviewFile(null)}
+                    className="text-[10px] font-bold text-white uppercase tracking-widest hover:text-sky-300 flex items-center gap-1 transition-colors bg-slate-800 px-3 py-2 rounded-lg border border-slate-700"
+                  >
+                    Cerrar Visor
+                  </button>
+
+                  <span className="text-white text-[11px] sm:text-xs font-bold truncate max-w-[130px] sm:max-w-md">
+                    {previewFile.name}
+                  </span>
+                </div>
+
+                <a
+                  href={previewFile.url}
+                  download
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 sm:px-5 sm:py-2.5 rounded-lg uppercase font-black tracking-widest transition-colors shadow-lg"
+                >
+                  Descargar
+                </a>
+              </div>
+
+              <div className="flex-1 w-full h-full overflow-hidden p-2 sm:p-6 bg-slate-300 flex flex-col items-center justify-center relative">
+                {previewFile.isImage ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={previewFile.url}
+                    alt={previewFile.name}
+                    className="max-w-full max-h-full object-contain rounded-xl shadow-2xl bg-white"
+                  />
+                ) : (
+                  <>
+                    <iframe
+                      src={`${previewFile.url}#view=FitH`}
+                      className="hidden sm:block w-full flex-1 rounded-xl shadow-2xl bg-white border-0"
+                      title={previewFile.name}
+                    />
+
+                    <div className="sm:hidden w-full flex-1 flex flex-col items-center justify-center bg-white rounded-xl shadow-2xl p-6 text-center border-2 border-dashed border-slate-300">
+                      <h3 className="text-base font-black text-slate-800 mb-2 uppercase">
+                        Documento PDF
+                      </h3>
+
+                      <p className="text-slate-500 text-xs mb-6">
+                        Tu navegador móvil requiere abrir el PDF en otra pestaña
+                        para poder leerlo.
+                      </p>
+
+                      <a
+                        href={previewFile.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full bg-sky-600 text-white px-4 py-4 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg"
+                      >
+                        Abrir Documento Original
+                      </a>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {selectedMovement && !previewFile && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in">
+            <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[95vh] flex flex-col shadow-2xl overflow-hidden transition-all duration-300">
+              <div className="p-4 sm:p-5 border-b flex justify-between items-center bg-slate-50">
+                <div>
+                  <h2 className="text-base sm:text-lg font-black text-slate-800 uppercase tracking-tight">
+                    Detalle del Movimiento
+                  </h2>
+
+                  <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 tracking-widest uppercase mt-1">
+                    Registrado el:{' '}
+                    {new Date(selectedMovement.createdAt).toLocaleString(
+                      'es-CO',
+                    )}
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => setSelectedMovement(null)}
+                  className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4 sm:space-y-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                      Tipo de Movimiento
+                    </p>
+
+                    <p className="text-sm font-black uppercase text-sky-700">
+                      {translateMovement(selectedMovement.type)}
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                      Autor de Gestión
+                    </p>
+
+                    <p className="text-sm font-bold text-slate-700 uppercase truncate">
+                      {selectedMovement.createdBy?.name || 'Sistema'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-2">
+                    Información de Origen y Destino
+                  </h3>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                        Origen
+                      </p>
+
+                      {selectedMovement.fromPerson ? (
+                        <p className="font-bold text-slate-800 uppercase">
+                          {selectedMovement.fromPerson.fullName}
+                          <span className="block text-xs text-slate-500 mt-0.5">
+                            Doc:{' '}
+                            {selectedMovement.fromPerson.documentId || '—'}
+                          </span>
+                        </p>
+                      ) : selectedMovement.fromLocation ? (
+                        <p className="font-bold text-slate-800 uppercase">
+                          {selectedMovement.fromLocation.name}
+                        </p>
+                      ) : (
+                        <p className="text-slate-400 uppercase font-medium text-xs">
+                          No aplica
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                        Destino
+                      </p>
+
+                      {selectedMovement.toPerson ? (
+                        <p className="font-bold text-slate-800 uppercase">
+                          {selectedMovement.toPerson.fullName}
+                          <span className="block text-xs text-slate-500 mt-0.5">
+                            Doc: {selectedMovement.toPerson.documentId || '—'}
+                          </span>
+                        </p>
+                      ) : selectedMovement.toLocation ? (
+                        <p className="font-bold text-slate-800 uppercase">
+                          {selectedMovement.toLocation.name}
+                        </p>
+                      ) : (
+                        <p className="text-slate-400 uppercase font-medium text-xs">
+                          No aplica
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4">
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-2">
+                    Soporte y Validación
+                  </h3>
+
+                  <div>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                      Firma o Trazo de Conformidad
+                    </p>
+
+                    {selectedMovement.signatureData?.startsWith(
+                      'data:image',
+                    ) ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={selectedMovement.signatureData}
+                        alt="Firma"
+                        className="h-20 border rounded bg-white p-2 object-contain shadow-sm"
+                      />
+                    ) : (
+                      <p className="text-[10px] font-bold italic text-slate-500 uppercase bg-white p-3 rounded border border-slate-200">
+                        {selectedMovement.signatureData ||
+                          'Sin firma registrada'}
+                      </p>
+                    )}
+                  </div>
+
+                  {displayNotes && (
+                    <div className="mt-4 pt-4 border-t border-slate-200">
+                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                        Notas Adicionales
+                      </p>
+
+                      <p className="text-xs text-slate-600 italic bg-white p-3 rounded border border-slate-200">
+                        {displayNotes}
+                      </p>
+                    </div>
+                  )}
+
+                  {(pdfUrl || soporteManualUrl) && (
+                    <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {pdfUrl && (
+                        <button
+                          onClick={() =>
+                            handlePreview(
+                              pdfUrl as string,
+                              'Comodato_Original.pdf',
+                            )
+                          }
+                          className={`w-full flex items-center justify-center bg-indigo-50 border-2 border-indigo-200 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 transition-all font-black uppercase text-[11px] sm:text-xs tracking-widest py-3 rounded-xl shadow-sm gap-2 ${
+                            !soporteManualUrl ? 'sm:col-span-2' : ''
+                          }`}
+                        >
+                          Ver Comodato
+                        </button>
+                      )}
+
+                      {soporteManualUrl && (
+                        <button
+                          onClick={() =>
+                            handlePreview(
+                              soporteManualUrl as string,
+                              soporteManualName,
+                            )
+                          }
+                          className={`w-full flex items-center justify-center bg-emerald-50 border-2 border-emerald-200 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300 transition-all font-black uppercase text-[11px] sm:text-xs tracking-widest py-3 rounded-xl shadow-sm gap-2 ${
+                            !pdfUrl ? 'sm:col-span-2' : ''
+                          }`}
+                        >
+                          Soporte Adicional
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {isOldRoute && (
+                    <div className="mt-4 pt-4 border-t border-slate-200">
+                      <p className="text-[10px] text-slate-500 font-medium italic text-center p-3 bg-slate-100 rounded-lg">
+                        El comodato de esta ruta antigua no está enlazado
+                        directamente.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-4 border-t bg-slate-50 flex justify-end">
+                <button
+                  onClick={() => setSelectedMovement(null)}
+                  className="w-full sm:w-auto px-6 py-3 sm:py-2 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg hover:bg-slate-800 transition-colors"
+                >
+                  Cerrar Detalles
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </Guard>
   );
 }
