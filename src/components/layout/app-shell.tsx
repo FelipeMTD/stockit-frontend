@@ -4,10 +4,25 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
-import { PropsWithChildren, useEffect, useMemo, useState } from 'react';
+import type { PropsWithChildren } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { api, getAccessToken } from '@/lib/api';
 import { normalizeRole, type AppRole } from '@/lib/roles';
+
+type User = {
+  id: string | number;
+  name?: string | null;
+  email?: string | null;
+  role?: string | null;
+  documentId?: string | null;
+  isActive?: boolean;
+};
+
+type RouteRule = {
+  path: string;
+  mode: 'exact' | 'prefix';
+};
 
 const ALL_LINKS = [
   { href: '/assets', label: 'Inventario', key: 'assets' },
@@ -17,19 +32,6 @@ const ALL_LINKS = [
   { href: '/reportes', label: 'Reportes', key: 'reports' },
   { href: '/settings', label: 'Configuraciones', key: 'settings' },
 ];
-
-type RouteRule = {
-  path: string;
-  mode: 'exact' | 'prefix';
-};
-
-type User = {
-  id: string | number;
-  name?: string | null;
-  email?: string | null;
-  role?: string | null;
-  documentId?: string | null;
-};
 
 const HOME_BY_ROLE: Record<AppRole, string> = {
   SUPER_ADMIN: '/assets',
@@ -96,8 +98,6 @@ const DENY_RULES_BY_ROLE: Partial<Record<AppRole, RouteRule[]>> = {
   ],
 
   ADMINISTRATIVO: [
-    { path: '/assets/new', mode: 'exact' },
-    { path: '/assets/import', mode: 'exact' },
     { path: '/people', mode: 'prefix' },
     { path: '/entregas', mode: 'prefix' },
     { path: '/routes', mode: 'prefix' },
@@ -113,8 +113,6 @@ const DENY_RULES_BY_ROLE: Partial<Record<AppRole, RouteRule[]>> = {
   ],
 
   VIEWER: [
-    { path: '/assets/new', mode: 'exact' },
-    { path: '/assets/import', mode: 'exact' },
     { path: '/people', mode: 'prefix' },
     { path: '/entregas', mode: 'prefix' },
     { path: '/routes', mode: 'prefix' },
@@ -149,18 +147,38 @@ function matchRule(pathname: string, rule: RouteRule) {
   return path === rulePath || path.startsWith(`${rulePath}/`);
 }
 
+function isAssetWritePath(pathname: string) {
+  const path = normalizePath(pathname);
+
+  if (path === '/assets/new') return true;
+  if (path === '/assets/import') return true;
+
+  return /^\/assets\/[^/]+\/edit$/.test(path);
+}
+
 function isDenied(pathname: string, role: AppRole) {
+  const path = normalizePath(pathname);
+
+  if (
+    (role === 'ADMINISTRATIVO' || role === 'VIEWER') &&
+    isAssetWritePath(path)
+  ) {
+    return true;
+  }
+
   const rules = DENY_RULES_BY_ROLE[role] ?? [];
-  return rules.some((rule) => matchRule(pathname, rule));
+  return rules.some((rule) => matchRule(path, rule));
 }
 
 function isAllowed(pathname: string, role: AppRole) {
-  if (isDenied(pathname, role)) {
+  const path = normalizePath(pathname);
+
+  if (isDenied(path, role)) {
     return false;
   }
 
   const rules = ALLOW_RULES_BY_ROLE[role] ?? [];
-  return rules.some((rule) => matchRule(pathname, rule));
+  return rules.some((rule) => matchRule(path, rule));
 }
 
 function getHomeForRole(role: AppRole | null) {
@@ -178,11 +196,6 @@ function getNavLinksForRole(role?: string | null) {
   const allowedLinks = NAV_LINKS_BY_ROLE[normalizedRole] ?? ['/assets'];
 
   return ALL_LINKS.filter((link) => allowedLinks.includes(link.href));
-}
-
-function normalizeDisplayRole(role?: string | null) {
-  const normalized = normalizeRole(role);
-  return normalized ?? 'VIEWER';
 }
 
 function initialsFrom(name?: string | null, email?: string | null) {
@@ -210,19 +223,73 @@ function clearLocalSession() {
   localStorage.removeItem('user_role');
   localStorage.removeItem('user');
   localStorage.removeItem('auth_user');
+  localStorage.removeItem('user_name');
+  localStorage.removeItem('user_id');
 }
 
 function persistLocalSession(user: User, role: AppRole) {
   if (typeof window === 'undefined') return;
 
   localStorage.setItem('user_role', role);
-  localStorage.setItem(
-    'user',
-    JSON.stringify({
-      ...user,
-      role,
-    }),
+  localStorage.setItem('user', JSON.stringify({ ...user, role }));
+
+  if (user.name) {
+    localStorage.setItem('user_name', user.name);
+  }
+
+  if (user.id) {
+    localStorage.setItem('user_id', String(user.id));
+  }
+}
+
+function readStoredUser(): { user: User; role: AppRole } | null {
+  if (typeof window === 'undefined') return null;
+
+  const token = getAccessToken();
+
+  if (!token) {
+    return null;
+  }
+
+  const rawUser =
+    localStorage.getItem('user') || localStorage.getItem('auth_user');
+
+  let parsedUser: Partial<User> = {};
+
+  if (rawUser) {
+    try {
+      parsedUser = JSON.parse(rawUser) as Partial<User>;
+    } catch {
+      parsedUser = {};
+    }
+  }
+
+  const role = normalizeRole(
+    parsedUser.role || localStorage.getItem('user_role'),
   );
+
+  if (!role) {
+    return null;
+  }
+
+  const user: User = {
+    id: parsedUser.id || localStorage.getItem('user_id') || 'local-user',
+    name:
+      parsedUser.name ||
+      localStorage.getItem('user_name') ||
+      parsedUser.email ||
+      'Usuario',
+    email: parsedUser.email || null,
+    documentId: parsedUser.documentId || null,
+    isActive: parsedUser.isActive ?? true,
+    role,
+  };
+
+  return { user, role };
+}
+
+function normalizeDisplayRole(role?: string | null) {
+  return normalizeRole(role) ?? 'VIEWER';
 }
 
 export default function AppShell({ children }: PropsWithChildren) {
@@ -240,72 +307,91 @@ export default function AppShell({ children }: PropsWithChildren) {
   useEffect(() => {
     let active = true;
 
-    async function validateSession() {
-      if (isLogin) {
+    if (isLogin) {
+      setUser(null);
+      setAuthorized(true);
+      setLoadingUser(false);
+      return;
+    }
+
+    const stored = readStoredUser();
+
+    if (!stored) {
+      clearLocalSession();
+      setUser(null);
+      setAuthorized(false);
+      setLoadingUser(false);
+      router.replace('/login');
+      return;
+    }
+
+    const { user: storedUser, role } = stored;
+
+    persistLocalSession(storedUser, role);
+
+    const allowed = isAllowed(pathname, role);
+
+    setUser(storedUser);
+    setAuthorized(allowed);
+    setLoadingUser(false);
+
+    if (!allowed) {
+      const target = getHomeForRole(role);
+
+      if (pathname !== target) {
+        router.replace(target);
+      }
+
+      return;
+    }
+
+    /**
+     * Validación remota en segundo plano.
+     * Importante:
+     * - NO bloquea el render inicial.
+     * - Evita quedarse pegado en "Cargando sesión…".
+     */
+    api
+      .get('/api/auth/me', {
+        timeout: 10_000,
+      })
+      .then((res) => {
         if (!active) return;
 
-        setLoadingUser(false);
-        setAuthorized(true);
-        return;
-      }
-
-      if (typeof window === 'undefined') return;
-
-      setLoadingUser(true);
-      setAuthorized(false);
-
-      const token = getAccessToken();
-
-      if (!token) {
-        clearLocalSession();
-        router.replace('/login');
-        return;
-      }
-
-      try {
-        const res = await api.get('/api/auth/me');
         const me = res.data as User;
-
         const normalizedRole = normalizeRole(me.role);
 
         if (!normalizedRole) {
           clearLocalSession();
+          setUser(null);
+          setAuthorized(false);
           router.replace('/login');
           return;
         }
 
         persistLocalSession(me, normalizedRole);
 
-        const currentPathAllowed = isAllowed(pathname, normalizedRole);
-
-        if (!currentPathAllowed) {
-          const target = getHomeForRole(normalizedRole);
-
-          if (pathname !== target) {
-            router.replace(target);
-            return;
-          }
-        }
-
-        if (!active) return;
+        const stillAllowed = isAllowed(pathname, normalizedRole);
 
         setUser({
           ...me,
           role: normalizedRole,
         });
 
-        setAuthorized(true);
-      } catch {
-        clearLocalSession();
-        router.replace('/login');
-      } finally {
-        if (active) {
-          setLoadingUser(false);
-        }
-      }
-    }
+        setAuthorized(stillAllowed);
 
-    validateSession();
+        if (!stillAllowed) {
+          router.replace(getHomeForRole(normalizedRole));
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+
+        clearLocalSession();
+        setUser(null);
+        setAuthorized(false);
+        router.replace('/login');
+      });
 
     return () => {
       active = false;
@@ -347,7 +433,7 @@ export default function AppShell({ children }: PropsWithChildren) {
   const displayName = user?.name?.trim() || user?.email || 'Usuario';
   const displayRole = normalizeDisplayRole(user?.role);
   const initials = initialsFrom(user?.name, user?.email);
-  const homeHref = navLinks[0]?.href || '/assets';
+  const homeHref = navLinks[0]?.href || getHomeForRole(displayRole);
 
   return (
     <div className="min-h-dvh bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
