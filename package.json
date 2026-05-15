@@ -13,7 +13,10 @@
     "test:e2e:rbac:headed": "PW_WORKERS=1 playwright test e2e/rbac-ui.spec.ts --headed",
     "test:e2e:report": "playwright show-report",
     "test:e2e:rbac-actions": "playwright test e2e/rbac-actions.spec.ts",
-    "test:e2e:reports-download": "playwright test e2e/reports-download.spec.ts"
+    "test:e2e:reports-download": "playwright test e2e/reports-download.spec.ts",
+    "test:e2e:assets-crud": "playwright test e2e/assets-crud.spec.ts",
+    "test:e2e:handover-flow": "playwright test e2e/handover-flow.spec.ts",
+    "test:e2e:routes-flow": "playwright test e2e/routes-flow.spec.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
