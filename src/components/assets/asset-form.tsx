@@ -1,415 +1,899 @@
 'use client';
 
-import { useForm } from 'react-hook-form';
-import { z } from 'zod';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Button } from '@/components/ui/button';
-import { api } from '@/lib/api';
-import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
-import { useCategories, useLocations, usePersons, useSites } from '@/lib/hooks';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+  Boxes,
+  Building2,
+  ImageIcon,
+  Loader2,
+  MapPin,
+  Save,
+  Settings2,
+  Wrench,
+} from 'lucide-react';
+import { toast } from 'sonner';
 
-const Schema = z.object({
-  tag: z.string().min(1, 'El código es obligatorio'),
-  name: z.string().min(1, 'El nombre es obligatorio'),
+import { useCategories, useLocations, useSites } from '@/lib/hooks';
 
-  brand: z.string().optional().nullable(),
-  model: z.string().optional().nullable(),
-  serial: z.string().optional().nullable(),
-  categoryId: z.string().optional().nullable(),
+export type MaintenanceFrequency =
+  | 'ANUAL'
+  | 'SEMESTRAL'
+  | 'TRIMESTRAL'
+  | 'NO_APLICA';
 
-  siteId: z.string().optional().nullable(),
-  assignedWarehouseId: z.string().optional().nullable(),
+export type AssetOperationalStatus =
+  | 'IN_STOCK'
+  | 'ASSIGNED'
+  | 'IN_REPAIR'
+  | 'LOST'
+  | 'DISPOSED';
 
-  purchaseDate: z.string().optional().nullable(),
-  purchaseCost: z.number().or(z.nan()).optional().nullable(),
+export type AssetLifeState = 'ACTIVE' | 'INACTIVE' | 'RETIRED';
 
-  acquisitionType: z
-    .enum(['PURCHASE', 'LEASE', 'DONATION', 'INTERNAL', 'OTHER'])
-    .optional()
-    .nullable(),
-  supplierName: z.string().optional().nullable(),
-  invoiceNumber: z.string().optional().nullable(),
-  invimaCode: z.string().optional().nullable(),
+export type AssetFormValue = {
+  tag: string;
+  name: string;
+  serial: string;
+  categoryId: string;
+  brand: string;
+  model: string;
+  supplierName: string;
+  invoiceNumber: string;
+  invimaCode: string;
+  purchaseCost: string | number;
+  purchaseDate: string;
+  warrantyUntil: string;
+  acquisitionType: string;
+  riskLevel: string;
+  maintenanceFrequency: MaintenanceFrequency;
+  status: AssetOperationalStatus;
+  lifeState: AssetLifeState;
+  photoUrl: string;
+  notes: string;
+  siteId: string;
+  currentLocationId: string;
+  assignedWarehouseId: string;
+};
 
-  riskLevel: z.enum(['I', 'IIA', 'IIB', 'III', 'NO_APLICA']).optional().nullable(),
-  maintenanceFrequency: z.enum(['ANUAL', 'SEMESTRAL', 'TRIMESTRAL', 'NO_APLICA']).optional().nullable(),
-  warrantyUntil: z.string().optional().nullable(),
-  
-  lifeState: z.enum(['ACTIVE', 'INACTIVE', 'RETIRED']).optional().nullable(),
+export type AssetFormPayload = {
+  tag: string;
+  name: string;
+  serial: string | null;
+  categoryId: string | null;
+  brand: string | null;
+  model: string | null;
+  supplierName: string | null;
+  invoiceNumber: string | null;
+  invimaCode: string | null;
+  purchaseCost: number | null;
+  purchaseDate: string;
+  warrantyUntil: string | null;
+  acquisitionType: string | null;
+  riskLevel: string | null;
+  maintenanceFrequency: MaintenanceFrequency | null;
+  status: AssetOperationalStatus;
+  lifeState: AssetLifeState | null;
+  photoUrl: string | null;
+  notes: string | null;
+  siteId: string | null;
+  currentLocationId: string | null;
+  assignedWarehouseId: string | null;
+};
 
-  locationId: z.string().optional().nullable(),
-  custodianId: z.string().optional().nullable(),
-});
+type AssetFormProps = {
+  mode: 'create' | 'edit';
+  initialValue?: Partial<AssetFormValue>;
+  isSubmitting?: boolean;
+  onSubmit: (payload: AssetFormPayload) => Promise<void> | void;
+  onCancel: () => void;
+};
 
-type FormValues = z.infer<typeof Schema>;
+const ESTADOS_OPERATIVOS: Array<{
+  value: AssetOperationalStatus;
+  label: string;
+}> = [
+  { value: 'IN_STOCK', label: 'En bodega' },
+  { value: 'ASSIGNED', label: 'Asignado' },
+  { value: 'IN_REPAIR', label: 'En reparación' },
+  { value: 'LOST', label: 'Perdido' },
+  { value: 'DISPOSED', label: 'De baja' },
+];
 
-export default function AssetForm() {
-  const router = useRouter();
+const ESTADOS_DE_VIDA: Array<{
+  value: AssetLifeState;
+  label: string;
+}> = [
+  { value: 'ACTIVE', label: 'Activo' },
+  { value: 'INACTIVE', label: 'Inactivo' },
+  { value: 'RETIRED', label: 'Retirado' },
+];
+
+const TIPOS_ADQUISICION = [
+  { value: '', label: 'Sin definir' },
+  { value: 'Compra', label: 'Compra' },
+  { value: 'Arrendamiento', label: 'Arrendamiento' },
+  { value: 'Donación', label: 'Donación' },
+  { value: 'Reposición', label: 'Reposición' },
+  { value: 'Otro', label: 'Otro' },
+];
+
+const NIVELES_RIESGO = [
+  { value: '', label: 'Sin definir' },
+  { value: 'I', label: 'I' },
+  { value: 'IIA', label: 'IIA' },
+  { value: 'IIB', label: 'IIB' },
+  { value: 'III', label: 'III' },
+  { value: 'NO APLICA', label: 'No aplica' },
+];
+
+const FRECUENCIAS_MANTENIMIENTO: Array<{
+  value: MaintenanceFrequency;
+  label: string;
+}> = [
+  { value: 'ANUAL', label: 'Anual' },
+  { value: 'SEMESTRAL', label: 'Semestral' },
+  { value: 'TRIMESTRAL', label: 'Trimestral' },
+  { value: 'NO_APLICA', label: 'No aplica' },
+];
+
+export function emptyAssetFormValue(): AssetFormValue {
+  return {
+    tag: '',
+    name: '',
+    serial: '',
+    categoryId: '',
+    brand: '',
+    model: '',
+    supplierName: '',
+    invoiceNumber: '',
+    invimaCode: '',
+    purchaseCost: '',
+    purchaseDate: '',
+    warrantyUntil: '',
+    acquisitionType: '',
+    riskLevel: '',
+    maintenanceFrequency: 'NO_APLICA',
+    status: 'IN_STOCK',
+    lifeState: 'ACTIVE',
+    photoUrl: '',
+    notes: '',
+    siteId: '',
+    currentLocationId: '',
+    assignedWarehouseId: '',
+  };
+}
+
+function normalizeFormValue(
+  initialValue?: Partial<AssetFormValue>,
+): AssetFormValue {
+  return {
+    ...emptyAssetFormValue(),
+    ...initialValue,
+    purchaseCost: initialValue?.purchaseCost ?? '',
+    maintenanceFrequency: initialValue?.maintenanceFrequency ?? 'NO_APLICA',
+    status: initialValue?.status ?? 'IN_STOCK',
+    lifeState: initialValue?.lifeState ?? 'ACTIVE',
+  };
+}
+
+function numOrNull(value: string) {
+  const normalized = value.replace(/\./g, '').replace(/,/g, '.').trim();
+
+  if (normalized === '') return null;
+
+  const parsed = Number(normalized);
+
+  if (Number.isNaN(parsed)) return Number.NaN;
+
+  return parsed;
+}
+
+function normalizeAllowedNames(raw: any[]) {
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .map((item, index) => {
+      if (typeof item === 'string') {
+        return {
+          id: `${item}-${index}`,
+          name: item,
+        };
+      }
+
+      return {
+        id: item?.id ?? `${item?.name ?? 'item'}-${index}`,
+        name: item?.name ?? '',
+      };
+    })
+    .filter((item) => item.name);
+}
+
+function Field({
+  label,
+  required,
+  hint,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+        {label}
+        {required && <span className="ml-1 text-red-500">*</span>}
+      </label>
+
+      {children}
+
+      {hint && <p className="text-xs leading-5 text-slate-500">{hint}</p>}
+    </div>
+  );
+}
+
+function TextInput({
+  value,
+  onChange,
+  placeholder,
+  required,
+  type = 'text',
+  inputMode,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  required?: boolean;
+  type?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
+}) {
+  return (
+    <input
+      type={type}
+      required={required}
+      value={value}
+      inputMode={inputMode}
+      placeholder={placeholder}
+      onChange={(event) => onChange(event.target.value)}
+      autoComplete="off"
+      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10"
+    />
+  );
+}
+
+function SelectInput({
+  value,
+  onChange,
+  children,
+  disabled,
+  required,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  children: React.ReactNode;
+  disabled?: boolean;
+  required?: boolean;
+}) {
+  return (
+    <select
+      value={value}
+      required={required}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {children}
+    </select>
+  );
+}
+
+export default function AssetForm({
+  mode,
+  initialValue,
+  isSubmitting,
+  onSubmit,
+  onCancel,
+}: AssetFormProps) {
   const cats = useCategories();
   const locs = useLocations();
-  const pers = usePersons();
   const sites = useSites();
 
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    formState: { errors, isSubmitting },
-    watch,
-  } = useForm<FormValues>({
-    resolver: zodResolver(Schema),
-    defaultValues: {
-      lifeState: 'ACTIVE',
-      siteId: null,
-      assignedWarehouseId: null,
-      locationId: null,
-      custodianId: null,
-      maintenanceFrequency: 'NO_APLICA',
-      riskLevel: null,
-    },
-  });
+  const [form, setForm] = useState<AssetFormValue>(() =>
+    normalizeFormValue(initialValue),
+  );
+
+  useEffect(() => {
+    setForm(normalizeFormValue(initialValue));
+  }, [initialValue]);
+
+  const set = <K extends keyof AssetFormValue>(
+    key: K,
+    value: AssetFormValue[K],
+  ) => {
+    setForm((state) => ({
+      ...state,
+      [key]: value,
+    }));
+  };
+
+  const categoryItemsRaw = (cats.data as any)?.items ?? cats.data ?? [];
+  const categoryItems: any[] = Array.isArray(categoryItemsRaw)
+    ? categoryItemsRaw
+    : [];
 
   const locItemsRaw = (locs.data as any)?.items ?? locs.data ?? [];
   const allLocations: any[] = Array.isArray(locItemsRaw) ? locItemsRaw : [];
 
-  const selectedSiteId = watch('siteId') || '';
-  const selectedCategoryId = watch('categoryId') || '';
-  
-  const selectedCategory = (cats.data as any[])?.find((c) => c.id === selectedCategoryId);
-  const availableNames = selectedCategory?.allowedNames || [];
+  const siteItemsRaw = (sites.data as any)?.items ?? sites.data ?? [];
+  const siteItems: any[] = Array.isArray(siteItemsRaw) ? siteItemsRaw : [];
 
-  const warehouses = allLocations.filter((l: any) => {
-    const t = String(l?.type ?? '').toLowerCase();
-    const isWarehouse = t === 'warehouse' || t.includes('bodega');
-    if (!isWarehouse) return false;
-    if (!selectedSiteId) return true;
-    if (!('siteId' in l)) return true;
-    return !l.siteId || l.siteId === selectedSiteId;
-  });
+  const selectedCategory = categoryItems.find(
+    (category: any) => category.id === form.categoryId,
+  );
 
-  const locationOptions = allLocations.filter((l: any) => {
-    if (!selectedSiteId) return true;
-    if (!('siteId' in l)) return true;
-    return !l.siteId || l.siteId === selectedSiteId;
-  });
+  const availableNamesRaw = normalizeAllowedNames(
+    selectedCategory?.allowedNames ?? selectedCategory?.assetNames ?? [],
+  );
 
-  const onSubmit = async (values: FormValues) => {
-    try {
-      const payload = {
-        ...values,
-        categoryId: values.categoryId || null,
-        siteId: values.siteId || null,
-        assignedWarehouseId: values.assignedWarehouseId || null,
-        locationId: values.locationId || null,
-        custodianId: values.custodianId || null,
-        riskLevel: values.riskLevel || null,
-        maintenanceFrequency: values.maintenanceFrequency || 'NO_APLICA',
-        lifeState: values.lifeState || 'ACTIVE',
-        
-        purchaseDate: values.purchaseDate ? new Date(values.purchaseDate).toISOString() : null,
-        warrantyUntil: values.warrantyUntil ? new Date(values.warrantyUntil).toISOString() : null,
-        purchaseCost: Number.isNaN(values.purchaseCost) ? null : values.purchaseCost,
-      };
+  const currentNameExists = availableNamesRaw.some(
+    (item) => item.name === form.name,
+  );
 
-      const res = await api.post('/api/assets', payload);
-      toast.success('Activo guardado');
-      router.push(`/assets/${res.data.id}`);
-    } catch (e: any) {
-      toast.error(e?.response?.data?.error ?? 'No se pudo guardar el activo');
+  const availableNames =
+    form.name && !currentNameExists
+      ? [{ id: `current-${form.name}`, name: form.name }, ...availableNamesRaw]
+      : availableNamesRaw;
+
+  const selectedSiteId = form.siteId || '';
+
+  const warehouses = useMemo(() => {
+    if (!allLocations.length) return [];
+
+    const hasType = allLocations.some(
+      (location) => typeof location?.type === 'string',
+    );
+
+    let list = hasType
+      ? allLocations.filter(
+          (location) =>
+            String(location?.type || '').toLowerCase() === 'warehouse',
+        )
+      : allLocations;
+
+    if (selectedSiteId) {
+      const hasSiteId = list.some((location) => 'siteId' in location);
+
+      if (hasSiteId) {
+        list = list.filter(
+          (location) => !location.siteId || location.siteId === selectedSiteId,
+        );
+      }
     }
-  };
+
+    return list;
+  }, [allLocations, selectedSiteId]);
+
+  const locationOptions = useMemo(() => {
+    if (!allLocations.length) return [];
+    if (!selectedSiteId) return allLocations;
+
+    const hasSiteId = allLocations.some((location) => 'siteId' in location);
+
+    if (!hasSiteId) return allLocations;
+
+    return allLocations.filter(
+      (location) => !location.siteId || location.siteId === selectedSiteId,
+    );
+  }, [allLocations, selectedSiteId]);
+
+  const previewSrc = useMemo(() => {
+    const url = String(form.photoUrl || '').trim();
+
+    if (!url) return '';
+
+    return url;
+  }, [form.photoUrl]);
+
+  const isBusy =
+    isSubmitting || cats.isLoading || locs.isLoading || sites.isLoading;
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const tag = form.tag.trim();
+    const name = form.name.trim();
+    const categoryId = form.categoryId.trim();
+    const purchaseDate = form.purchaseDate.trim();
+
+    if (!tag) {
+      toast.error('El código es obligatorio.');
+      return;
+    }
+
+    if (!name) {
+      toast.error('El nombre es obligatorio.');
+      return;
+    }
+
+    if (!categoryId) {
+      toast.error('La categoría es obligatoria.');
+      return;
+    }
+
+    if (!purchaseDate) {
+      toast.error('La fecha de compra es obligatoria.');
+      return;
+    }
+
+    const purchaseCost =
+      String(form.purchaseCost ?? '').trim() === ''
+        ? null
+        : numOrNull(String(form.purchaseCost));
+
+    if (Number.isNaN(purchaseCost)) {
+      toast.error('El valor del activo debe ser numérico.');
+      return;
+    }
+
+    const shouldDefaultToWarehouse =
+      form.status === 'IN_STOCK' &&
+      (!form.currentLocationId || form.currentLocationId === '') &&
+      !!form.assignedWarehouseId;
+
+    const payload: AssetFormPayload = {
+      tag,
+      name,
+      serial: form.serial.trim() || null,
+      categoryId: categoryId || null,
+      brand: form.brand.trim() || null,
+      model: form.model.trim() || null,
+      supplierName: form.supplierName.trim() || null,
+      invoiceNumber: form.invoiceNumber.trim() || null,
+      invimaCode: form.invimaCode.trim() || null,
+      purchaseCost,
+      purchaseDate,
+      warrantyUntil: form.warrantyUntil || null,
+      acquisitionType: form.acquisitionType || null,
+      riskLevel: form.riskLevel || null,
+      maintenanceFrequency: form.maintenanceFrequency || null,
+      status: form.status,
+      lifeState: form.lifeState || null,
+      photoUrl: form.photoUrl.trim() || null,
+      notes: form.notes.trim() || null,
+      siteId: form.siteId || null,
+      currentLocationId: shouldDefaultToWarehouse
+        ? form.assignedWarehouseId
+        : form.currentLocationId || null,
+      assignedWarehouseId: form.assignedWarehouseId || null,
+    };
+
+    await onSubmit(payload);
+  }
 
   return (
-    <form
-      onSubmit={handleSubmit(onSubmit)}
-      className="space-y-4 border rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm"
-    >
-      <div className="grid md:grid-cols-2 gap-3">
-        <div className="grid gap-1.5">
-          <Label>Código de activo *</Label>
-          <Input placeholder="ACT-0001" {...register('tag')} />
-          {errors.tag && <p className="text-xs text-rose-500">{errors.tag.message}</p>}
+    <form onSubmit={handleSubmit}>
+      <div className="grid gap-0 lg:grid-cols-[1fr_330px]">
+        <div className="space-y-6 p-4 sm:p-5">
+          <section className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+            <div className="mb-4 flex items-start gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#3C9CD1]/10 text-[#1B3859]">
+                <Boxes className="h-5 w-5" />
+              </div>
+
+              <div>
+                <h2 className="text-sm font-semibold text-[#1B3859]">
+                  Identificación
+                </h2>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Código / Tag" required>
+                <TextInput
+                  value={form.tag}
+                  onChange={(value) => set('tag', value)}
+                  placeholder="ACT-0001"
+                  required
+                />
+              </Field>
+
+              <Field label="Categoría" required>
+                <SelectInput
+                  value={form.categoryId}
+                  onChange={(value) => {
+                    set('categoryId', value);
+                    set('name', '');
+                  }}
+                  required
+                >
+                  <option value="">Selecciona…</option>
+
+                  {categoryItems.map((category: any) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+
+              <Field label="Nombre del activo" required>
+                {availableNames.length > 0 ? (
+                  <SelectInput
+                    value={form.name}
+                    onChange={(value) => set('name', value)}
+                    disabled={!form.categoryId}
+                    required
+                  >
+                    <option value="">
+                      {!form.categoryId
+                        ? 'Selecciona categoría primero'
+                        : 'Selecciona nombre…'}
+                    </option>
+
+                    {availableNames.map((item) => (
+                      <option key={item.id} value={item.name}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </SelectInput>
+                ) : (
+                  <TextInput
+                    value={form.name}
+                    onChange={(value) => set('name', value)}
+                    placeholder={
+                      form.categoryId
+                        ? 'Nombre del activo'
+                        : 'Selecciona categoría primero'
+                    }
+                    required
+                  />
+                )}
+              </Field>
+
+              <Field label="Serial">
+                <TextInput
+                  value={form.serial}
+                  onChange={(value) => set('serial', value)}
+                  placeholder="SN-ABC-123"
+                />
+              </Field>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="mb-4 flex items-start gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#54BF5B]/10 text-[#16803A]">
+                <Building2 className="h-5 w-5" />
+              </div>
+
+              <div>
+                <h2 className="text-sm font-semibold text-[#1B3859]">
+                  Ubicación y estado
+                </h2>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field label="Sede">
+                <SelectInput
+                  value={form.siteId || ''}
+                  onChange={(value) => {
+                    set('siteId', value);
+                    set('assignedWarehouseId', '');
+                    set('currentLocationId', '');
+                  }}
+                >
+                  <option value="">Sin sede</option>
+
+                  {siteItems.map((site: any) => (
+                    <option key={site.id} value={site.id}>
+                      {site.name}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+
+              <Field
+                label="Bodega asignada"
+                hint="Si el activo está en bodega y no tiene ubicación actual, se usará esta bodega."
+              >
+                <SelectInput
+                  value={form.assignedWarehouseId || ''}
+                  onChange={(value) => set('assignedWarehouseId', value)}
+                >
+                  <option value="">Sin bodega</option>
+
+                  {warehouses.map((location: any) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+
+              <Field label="Ubicación actual">
+                <SelectInput
+                  value={form.currentLocationId || ''}
+                  onChange={(value) => set('currentLocationId', value)}
+                >
+                  <option value="">Sin ubicación</option>
+
+                  {locationOptions.map((location: any) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+            </div>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <Field label="Estado operativo">
+                <SelectInput
+                  value={form.status}
+                  onChange={(value) =>
+                    set('status', value as AssetOperationalStatus)
+                  }
+                >
+                  {ESTADOS_OPERATIVOS.map((status) => (
+                    <option key={status.value} value={status.value}>
+                      {status.label}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+
+              <Field label="Estado del activo">
+                <SelectInput
+                  value={form.lifeState}
+                  onChange={(value) => set('lifeState', value as AssetLifeState)}
+                >
+                  {ESTADOS_DE_VIDA.map((state) => (
+                    <option key={state.value} value={state.value}>
+                      {state.label}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="mb-4 flex items-start gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#3C9CD1]/10 text-[#1B3859]">
+                <Settings2 className="h-5 w-5" />
+              </div>
+
+              <div>
+                <h2 className="text-sm font-semibold text-[#1B3859]">
+                  Datos técnicos y compra
+                </h2>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field label="Marca">
+                <TextInput
+                  value={form.brand}
+                  onChange={(value) => set('brand', value)}
+                  placeholder="Dell"
+                />
+              </Field>
+
+              <Field label="Modelo">
+                <TextInput
+                  value={form.model}
+                  onChange={(value) => set('model', value)}
+                  placeholder="Latitude 5440"
+                />
+              </Field>
+
+              <Field label="Proveedor">
+                <TextInput
+                  value={form.supplierName}
+                  onChange={(value) => set('supplierName', value)}
+                  placeholder="Proveedor"
+                />
+              </Field>
+
+              <Field label="Factura">
+                <TextInput
+                  value={form.invoiceNumber}
+                  onChange={(value) => set('invoiceNumber', value)}
+                  placeholder="FV-12345"
+                />
+              </Field>
+
+              <Field label="Invima">
+                <TextInput
+                  value={form.invimaCode}
+                  onChange={(value) => set('invimaCode', value)}
+                  placeholder="INV-0000"
+                />
+              </Field>
+
+              <Field label="Valor">
+                <TextInput
+                  value={String(form.purchaseCost ?? '')}
+                  onChange={(value) => set('purchaseCost', value)}
+                  placeholder="2500000"
+                  inputMode="decimal"
+                />
+              </Field>
+
+              <Field label="Fecha de compra" required>
+                <TextInput
+                  type="date"
+                  value={form.purchaseDate}
+                  onChange={(value) => set('purchaseDate', value)}
+                  required
+                />
+              </Field>
+
+              <Field label="Garantía hasta">
+                <TextInput
+                  type="date"
+                  value={form.warrantyUntil}
+                  onChange={(value) => set('warrantyUntil', value)}
+                />
+              </Field>
+
+              <Field label="Tipo de adquisición">
+                <SelectInput
+                  value={form.acquisitionType}
+                  onChange={(value) => set('acquisitionType', value)}
+                >
+                  {TIPOS_ADQUISICION.map((type) => (
+                    <option key={type.value} value={type.value}>
+                      {type.label}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+
+              <Field label="Nivel de riesgo">
+                <SelectInput
+                  value={form.riskLevel}
+                  onChange={(value) => set('riskLevel', value)}
+                >
+                  {NIVELES_RIESGO.map((level) => (
+                    <option key={level.value} value={level.value}>
+                      {level.label}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+
+              <Field label="Frecuencia mantenimiento">
+                <SelectInput
+                  value={form.maintenanceFrequency || 'NO_APLICA'}
+                  onChange={(value) =>
+                    set('maintenanceFrequency', value as MaintenanceFrequency)
+                  }
+                >
+                  {FRECUENCIAS_MANTENIMIENTO.map((frequency) => (
+                    <option key={frequency.value} value={frequency.value}>
+                      {frequency.label}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="mb-4 flex items-start gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#A7C349]/15 text-[#5D711D]">
+                <ImageIcon className="h-5 w-5" />
+              </div>
+
+              <div>
+                <h2 className="text-sm font-semibold text-[#1B3859]">
+                  Foto y observaciones
+                </h2>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="md:col-span-2">
+                <Field label="Foto URL">
+                  <TextInput
+                    value={form.photoUrl}
+                    onChange={(value) => set('photoUrl', value)}
+                    placeholder="https://..."
+                  />
+                </Field>
+              </div>
+
+              {previewSrc && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={previewSrc}
+                    alt="Vista previa"
+                    className="h-28 w-full rounded-xl object-cover"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4">
+              <Field label="Notas">
+                <textarea
+                  value={form.notes}
+                  onChange={(event) => set('notes', event.target.value)}
+                  placeholder="Observaciones, mantenimientos, comentarios…"
+                  className="min-h-28 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10"
+                />
+              </Field>
+            </div>
+          </section>
         </div>
 
-        <div className="grid gap-1.5">
-          <Label>Categoría</Label>
-          <Select
-            value={selectedCategoryId}
-            onValueChange={(v) => {
-              setValue('categoryId', v || null, { shouldDirty: true });
-              setValue('name', '', { shouldDirty: true }); 
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder={cats.isLoading ? 'Cargando...' : 'Selecciona categoría'} />
-            </SelectTrigger>
-            <SelectContent>
-              {cats.data?.map((c: any) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <aside className="border-t border-slate-200 bg-slate-50/70 p-4 sm:p-5 lg:border-l lg:border-t-0">
+          <div className="sticky top-36 space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <p className="text-sm font-semibold text-[#1B3859]">
+                Campos obligatorios
+              </p>
 
-        <div className="grid gap-1.5">
-          <Label>Nombre del activo *</Label>
-          <Select
-            value={watch('name') ?? ''}
-            onValueChange={(v) => setValue('name', v, { shouldDirty: true, shouldValidate: true })}
-            disabled={!selectedCategoryId}
-          >
-            <SelectTrigger className={errors.name ? 'border-rose-500' : ''}>
-              <SelectValue placeholder={!selectedCategoryId ? "← Elija categoría primero" : "Seleccione nombre..."} />
-            </SelectTrigger>
-            <SelectContent>
-              {availableNames.map((n: any) => (
-                <SelectItem key={n.id} value={n.name}>
-                  {n.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {errors.name && <p className="text-xs text-rose-500">{errors.name.message}</p>}
-        </div>
+              <ul className="mt-3 space-y-2 text-xs text-slate-600">
+                <li>• Código / Tag</li>
+                <li>• Nombre</li>
+                <li>• Categoría</li>
+                <li>• Fecha de compra</li>
+              </ul>
+            </div>
 
-        <div className="grid gap-1.5">
-          <Label>Marca</Label>
-          <Input placeholder="Dell / HP / Lenovo" {...register('brand')} />
-        </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-start gap-3">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#54BF5B]/10 text-[#16803A]">
+                  <MapPin className="h-5 w-5" />
+                </div>
 
-        <div className="grid gap-1.5">
-          <Label>Modelo</Label>
-          <Input placeholder="Latitude 5420" {...register('model')} />
-        </div>
+                <div>
+                  <p className="text-sm font-semibold text-[#1B3859]">
+                    Regla de bodega
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    Si el activo queda <b>En bodega</b> y no indicas ubicación
+                    actual, se usará la bodega asignada.
+                  </p>
+                </div>
+              </div>
+            </div>
 
-        <div className="grid gap-1.5">
-          <Label>Serie</Label>
-          <Input placeholder="SN-ABC-123" {...register('serial')} />
-        </div>
+            <div className="flex flex-col gap-2">
+              <button
+                type="submit"
+                disabled={isBusy}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#1B3859] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#132B45] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isBusy ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Guardando…
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4" />
+                    {mode === 'create' ? 'Crear activo' : 'Guardar cambios'}
+                  </>
+                )}
+              </button>
 
-        <div className="grid gap-1.5">
-          <Label>Sede</Label>
-          <Select
-            value={selectedSiteId}
-            onValueChange={(v) => {
-              setValue('siteId', v || null, { shouldDirty: true });
-              setValue('assignedWarehouseId', null, { shouldDirty: true });
-              setValue('locationId', null, { shouldDirty: true });
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder={sites.isLoading ? 'Cargando...' : 'Selecciona sede'} />
-            </SelectTrigger>
-            <SelectContent>
-              {sites.data?.map((s: any) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label>Bodega asignada</Label>
-          <Select
-            value={watch('assignedWarehouseId') ?? ''}
-            onValueChange={(v) =>
-              setValue('assignedWarehouseId', v || null, { shouldDirty: true })
-            }
-          >
-            <SelectTrigger>
-              <SelectValue placeholder={locs.isLoading ? 'Cargando...' : 'Selecciona bodega'} />
-            </SelectTrigger>
-            <SelectContent>
-              {warehouses.map((w: any) => (
-                <SelectItem key={w.id} value={w.id}>
-                  {w.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-slate-500">
-            Cuando el activo esté disponible (IN_STOCK), su ubicación actual puede sincronizarse con esta bodega.
-          </p>
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label>Fecha de compra</Label>
-          <Input type="date" {...register('purchaseDate')} />
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label>Valor</Label>
-          <Input
-            type="number"
-            step="0.01"
-            placeholder="0.00"
-            {...register('purchaseCost', { valueAsNumber: true })}
-          />
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label>Tipo de adquisición</Label>
-          <Select
-            value={watch('acquisitionType') ?? ''}
-            onValueChange={(v) =>
-              setValue('acquisitionType', (v as any) || null, { shouldDirty: true })
-            }
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Seleccione" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="PURCHASE">Compra</SelectItem>
-              <SelectItem value="LEASE">Arrendamiento</SelectItem>
-              <SelectItem value="DONATION">Donación</SelectItem>
-              <SelectItem value="INTERNAL">Fabricación interna</SelectItem>
-              <SelectItem value="OTHER">Otra</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label>Proveedor</Label>
-          <Input placeholder="Proveedor S.A.S." {...register('supplierName')} />
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label>Factura</Label>
-          <Input placeholder="FAC-12345" {...register('invoiceNumber')} />
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label>Invima</Label>
-          <Input placeholder="2019DM-0012345" {...register('invimaCode')} />
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label>Nivel de riesgo</Label>
-          <Select
-            value={watch('riskLevel') ?? ''}
-            onValueChange={(v) =>
-              setValue('riskLevel', (v as any) || null, { shouldDirty: true })
-            }
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Seleccione" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="I">I</SelectItem>
-              <SelectItem value="IIA">IIA</SelectItem>
-              <SelectItem value="IIB">IIB</SelectItem>
-              <SelectItem value="III">III</SelectItem>
-              <SelectItem value="NO_APLICA">No aplica</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label>Frecuencia de mantenimiento</Label>
-          <Select
-            value={watch('maintenanceFrequency') ?? 'NO_APLICA'}
-            onValueChange={(v) =>
-              setValue('maintenanceFrequency', (v as any) || 'NO_APLICA', { shouldDirty: true })
-            }
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Seleccione" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ANUAL">Anual</SelectItem>
-              <SelectItem value="SEMESTRAL">Semestral</SelectItem>
-              <SelectItem value="TRIMESTRAL">Trimestral</SelectItem>
-              <SelectItem value="NO_APLICA">No aplica</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label>Garantía (vence)</Label>
-          <Input type="date" {...register('warrantyUntil')} />
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label>Estado del activo</Label>
-          <Select
-            value={watch('lifeState') ?? 'ACTIVE'}
-            onValueChange={(v) => setValue('lifeState', v as any, { shouldDirty: true })}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Activo" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ACTIVE">Activo</SelectItem>
-              <SelectItem value="INACTIVE">Inactivo</SelectItem>
-              <SelectItem value="RETIRED">Baja</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label>Ubicación inicial (opcional)</Label>
-          <Select
-            value={watch('locationId') ?? ''}
-            onValueChange={(v) => setValue('locationId', v || null, { shouldDirty: true })}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder={locs.isLoading ? 'Cargando...' : 'Selecciona ubicación'} />
-            </SelectTrigger>
-            <SelectContent>
-              {locationOptions.map((l: any) => (
-                <SelectItem key={l.id} value={l.id}>
-                  {l.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-slate-500">
-            Si eliges custodio, se ignora la ubicación (se asigna a la persona).
-          </p>
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label>Persona asignada (opcional)</Label>
-          <Select
-            value={watch('custodianId') ?? ''}
-            onValueChange={(v) => setValue('custodianId', v || null, { shouldDirty: true })}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder={pers.isLoading ? 'Cargando...' : 'Selecciona persona'} />
-            </SelectTrigger>
-            <SelectContent>
-              {pers.data?.map((p: any) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.fullName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      <div className="flex justify-end">
-        <Button
-          className="rounded-xl bg-lime-500 from-brand to-accent text-white px-4 py-2 text-sm hover:bg-sky-900 disabled:opacity-60"
-          type="submit"
-          disabled={isSubmitting}
-        >
-          {isSubmitting ? 'Guardando…' : 'Guardar'}
-        </Button>
+              <button
+                type="button"
+                onClick={onCancel}
+                disabled={isBusy}
+                className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </aside>
       </div>
     </form>
   );

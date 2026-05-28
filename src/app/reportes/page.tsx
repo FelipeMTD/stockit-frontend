@@ -1,10 +1,35 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import {
+  
+  CalendarDays,
+  ClipboardList,
+  Database,
+  Download,
+  FileSpreadsheet,
+  Filter,
+  Loader2,
+  PackageCheck,
+  RotateCcw,
+  Search,
+  Shield,
+  UserRound,
+  Users,
+  XCircle,
+} from 'lucide-react';
 import { toast } from 'sonner';
+
 import Guard from '@/components/auth-guard';
+import { PageShell } from '@/components/common/page-shell';
+import { SectionCard } from '@/components/common/section-card';
+import { api } from '@/lib/api';
 import { capsFor, normalizeRole, type AppRole } from '@/lib/roles';
 
 type Person = {
@@ -45,7 +70,13 @@ type Location = {
   siteId?: string | null;
 };
 
-const STATUS_OPTIONS = [
+type CheckboxOption = {
+  value: string;
+  label: string;
+  description?: string | null;
+};
+
+const STATUS_OPTIONS: CheckboxOption[] = [
   { value: 'IN_STOCK', label: 'En bodega' },
   { value: 'ASSIGNED', label: 'Asignado' },
   { value: 'IN_REPAIR', label: 'En reparación' },
@@ -53,7 +84,7 @@ const STATUS_OPTIONS = [
   { value: 'DISPOSED', label: 'De baja' },
 ];
 
-const PERSON_TYPES = [
+const PERSON_TYPES: CheckboxOption[] = [
   { value: 'PACIENTE', label: 'Paciente' },
   { value: 'NOMINA', label: 'Nómina' },
   { value: 'OPS', label: 'OPS' },
@@ -65,6 +96,7 @@ const BIG_PAGE_SIZE = 10_000;
 function toggleValue(current: string[], value: string, checked: boolean) {
   if (checked) {
     if (current.includes(value)) return current;
+
     return [...current, value];
   }
 
@@ -91,6 +123,170 @@ function extractItems<T>(payload: unknown): T[] {
   return [];
 }
 
+function inputClass() {
+  return 'h-11 w-full rounded-2xl border border-slate-200 bg-white px-10 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10';
+}
+
+function smallInputClass() {
+  return 'h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10';
+}
+
+
+
+function SearchBox({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+}) {
+  return (
+    <div className="relative">
+      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className={inputClass()}
+      />
+
+      {value && (
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          className="absolute right-3 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+          aria-label="Limpiar búsqueda"
+        >
+          <XCircle className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CheckboxPanel({
+  title,
+  subtitle,
+  options,
+  selected,
+  onToggle,
+  loading,
+  emptyLabel = 'Sin opciones disponibles',
+  maxHeight = 'max-h-48',
+}: {
+  title: string;
+  subtitle?: string;
+  options: CheckboxOption[];
+  selected: string[];
+  onToggle: (value: string, checked: boolean) => void;
+  loading?: boolean;
+  emptyLabel?: string;
+  maxHeight?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-3">
+        <p className="text-sm font-semibold text-[#1B3859]">{title}</p>
+        {subtitle && <p className="mt-1 text-xs text-slate-500">{subtitle}</p>}
+      </div>
+
+      <div
+        className={`${maxHeight} space-y-1 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2`}
+      >
+        {loading ? (
+          <div className="flex items-center gap-2 px-2 py-3 text-xs text-slate-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Cargando…
+          </div>
+        ) : options.length === 0 ? (
+          <p className="px-2 py-3 text-xs text-slate-400">{emptyLabel}</p>
+        ) : (
+          options.map((option) => (
+            <label
+              key={option.value}
+              className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 text-xs text-slate-700 transition hover:bg-white sm:text-sm"
+            >
+              <input
+                type="checkbox"
+                className="mt-0.5 rounded border-slate-300 text-[#1B3859] focus:ring-[#3C9CD1]"
+                checked={selected.includes(option.value)}
+                onChange={(event) => onToggle(option.value, event.target.checked)}
+              />
+
+              <span className="min-w-0">
+                <span className="block truncate font-medium">{option.label}</span>
+                {option.description && (
+                  <span className="block truncate text-[11px] text-slate-500">
+                    {option.description}
+                  </span>
+                )}
+              </span>
+            </label>
+          ))
+        )}
+      </div>
+
+      {selected.length > 0 && (
+        <p className="mt-2 text-xs font-semibold text-[#1B3859]">
+          {selected.length} seleccionado(s)
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ReportCard({
+  title,
+  description,
+  icon,
+  badge,
+  children,
+  footer,
+}: {
+  title: string;
+  description: string;
+  icon: ReactNode;
+  badge?: string;
+  children: ReactNode;
+  footer: ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-200 bg-slate-50/70 p-4 sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#3C9CD1]/10 text-[#1B3859]">
+              {icon}
+            </div>
+
+            <div>
+              <h2 className="text-base font-bold text-[#111827]">{title}</h2>
+              <p className="mt-1 text-sm leading-5 text-slate-500">
+                {description}
+              </p>
+            </div>
+          </div>
+
+          {badge && (
+            <span className="inline-flex h-8 shrink-0 items-center rounded-full border border-[#3C9CD1]/30 bg-[#3C9CD1]/10 px-3 text-xs font-semibold text-[#1B3859]">
+              {badge}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-4 p-4 sm:p-5">{children}</div>
+
+      <div className="flex justify-end border-t border-slate-100 bg-slate-50/60 px-4 py-4 sm:px-5">
+        {footer}
+      </div>
+    </section>
+  );
+}
+
 export default function ReportesPage() {
   const [roleReady, setRoleReady] = useState(false);
   const [role, setRole] = useState<AppRole | null>(null);
@@ -99,6 +295,7 @@ export default function ReportesPage() {
     if (typeof window === 'undefined') return;
 
     const storedRole = localStorage.getItem('user_role');
+
     setRole(normalizeRole(storedRole));
     setRoleReady(true);
   }, []);
@@ -133,13 +330,13 @@ export default function ReportesPage() {
     queryKey: ['assets-mini-for-reports'],
     enabled: roleReady && needsMovementCatalogs,
     queryFn: async (): Promise<Asset[]> => {
-      const res = await api.get<{ items: Asset[] }>('/api/assets', {
+      const res = await api.get<Asset[] | { items: Asset[] }>('/api/assets', {
         params: {
           pageSize: BIG_PAGE_SIZE,
         },
       });
 
-      return res.data.items;
+      return extractItems<Asset>(res.data);
     },
   });
 
@@ -147,11 +344,6 @@ export default function ReportesPage() {
     queryKey: ['users-mini-for-reports'],
     enabled: roleReady && needsMovementCatalogs,
     queryFn: async (): Promise<User[]> => {
-      /**
-       * No usar /api/users aquí.
-       * /api/users queda reservado para gestión completa de usuarios.
-       * /api/users/mini es el catálogo liviano permitido para filtros.
-       */
       const res = await api.get<User[] | { items: User[] }>('/api/users/mini', {
         params: {
           pageSize: BIG_PAGE_SIZE,
@@ -168,7 +360,7 @@ export default function ReportesPage() {
     queryKey: ['categories-mini-for-reports'],
     enabled: roleReady && needsInventoryCatalogs,
     queryFn: async (): Promise<Category[]> => {
-      const res = await api.get<{ items: Category[] }>(
+      const res = await api.get<Category[] | { items: Category[] }>(
         '/api/catalog/categories',
         {
           params: {
@@ -177,7 +369,7 @@ export default function ReportesPage() {
         },
       );
 
-      return res.data.items;
+      return extractItems<Category>(res.data);
     },
   });
 
@@ -185,13 +377,13 @@ export default function ReportesPage() {
     queryKey: ['sites-mini-for-reports'],
     enabled: roleReady && needsInventoryCatalogs,
     queryFn: async (): Promise<Site[]> => {
-      const res = await api.get<{ items: Site[] }>('/api/sites', {
+      const res = await api.get<Site[] | { items: Site[] }>('/api/sites', {
         params: {
           pageSize: 500,
         },
       });
 
-      return res.data.items;
+      return extractItems<Site>(res.data);
     },
   });
 
@@ -199,7 +391,7 @@ export default function ReportesPage() {
     queryKey: ['locations-mini-for-reports'],
     enabled: roleReady && needsInventoryCatalogs,
     queryFn: async (): Promise<Location[]> => {
-      const res = await api.get<{ items: Location[] }>(
+      const res = await api.get<Location[] | { items: Location[] }>(
         '/api/catalog/locations',
         {
           params: {
@@ -208,7 +400,7 @@ export default function ReportesPage() {
         },
       );
 
-      return res.data.items;
+      return extractItems<Location>(res.data);
     },
   });
 
@@ -325,6 +517,29 @@ export default function ReportesPage() {
     download(url, 'poblacion.csv');
   };
 
+  const clearInventoryFilters = () => {
+    setInvQ('');
+    setInvStatus([]);
+    setInvCategoryIds([]);
+    setInvSiteIds([]);
+    setInvWarehouseIds([]);
+  };
+
+  const clearPeopleFilters = () => {
+    setPeopleTypeFilters([]);
+  };
+
+  const clearMovementFilters = () => {
+    setFrom('');
+    setTo('');
+    setMovAssetIds([]);
+    setMovPersonIds([]);
+    setMovAdminIds([]);
+    setAssetSearch('');
+    setPersonSearch('');
+    setAdminSearch('');
+  };
+
   const filteredAssets =
     assetsQ.data?.filter((asset) => {
       const term = assetSearch.trim().toLowerCase();
@@ -360,413 +575,482 @@ export default function ReportesPage() {
         .includes(term);
     }) ?? [];
 
-  const hasAnyReport =
-    canExportInventory || canExportMovements || canExportPeople;
+  const inventorySelectedCount =
+    invStatus.length +
+    invCategoryIds.length +
+    invSiteIds.length +
+    invWarehouseIds.length +
+    (invQ.trim() ? 1 : 0);
+
+  const movementSelectedCount =
+    movAssetIds.length +
+    movPersonIds.length +
+    movAdminIds.length +
+    (from ? 1 : 0) +
+    (to ? 1 : 0);
+
+
+
+  if (!roleReady) {
+    return (
+      <Guard>
+        <PageShell>
+          <SectionCard>
+            <div className="flex items-center gap-2 text-sm text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Verificando reportes disponibles…
+            </div>
+          </SectionCard>
+        </PageShell>
+      </Guard>
+    );
+  }
 
   return (
     <Guard>
-      <section className="space-y-6">
-        <div>
-          <h1 className="text-lg font-semibold">Reportes</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Exportación controlada según permisos del rol.
-          </p>
-        </div>
+      <PageShell>
+        <SectionCard title="Reportes" contentClassName="p-0">
+          <div className="space-y-5 p-4 sm:p-5">
+           
 
-        {roleReady && !hasAnyReport && (
-          <div className="rounded-xl border bg-white p-4 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300">
-            No tienes reportes disponibles para exportar.
-          </div>
-        )}
+            {canExportInventory && (
+              <ReportCard
+                title="Inventario"
+                description="Exporta activos fijos en CSV con filtros por texto, estado, categoría, sede y bodega asignada."
+                icon={<Database className="h-5 w-5" />}
+                badge={`${inventorySelectedCount} filtro(s)`}
+                footer={
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={clearInventoryFilters}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      Limpiar
+                    </button>
 
-        {canExportInventory && (
-          <div className="border rounded-xl bg-white dark:bg-slate-900 p-4 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <h2 className="font-medium">Inventario (CSV)</h2>
-              <p className="text-xs text-slate-500">
-                Filtros multiselección por estado, categoría, sede y bodega.
-              </p>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <label className="text-xs text-slate-500">Buscar</label>
-                <input
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                    <button
+                      type="button"
+                      onClick={downloadInventory}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#1B3859] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#132B45]"
+                    >
+                      <Download className="h-4 w-4" />
+                      Descargar inventario
+                    </button>
+                  </div>
+                }
+              >
+                <SearchBox
                   value={invQ}
-                  onChange={(event) => setInvQ(event.target.value)}
-                  placeholder="código / nombre / serie / custodio"
+                  onChange={setInvQ}
+                  placeholder="Buscar por código, nombre, serie o custodio…"
                 />
-              </div>
 
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">
-                  Estado (multi)
-                </label>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <CheckboxPanel
+                    title="Estado"
+                    subtitle="Filtra por estado del activo."
+                    options={STATUS_OPTIONS}
+                    selected={invStatus}
+                    onToggle={(value, checked) =>
+                      setInvStatus((prev) => toggleValue(prev, value, checked))
+                    }
+                  />
 
-                <div className="border rounded-lg px-3 py-2 max-h-40 overflow-auto space-y-1">
-                  {STATUS_OPTIONS.map((option) => (
-                    <label
-                      key={option.value}
-                      className="flex items-center gap-2 text-xs sm:text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        className="rounded border"
-                        checked={invStatus.includes(option.value)}
-                        onChange={(event) =>
-                          setInvStatus((prev) =>
-                            toggleValue(
-                              prev,
-                              option.value,
-                              event.target.checked,
-                            ),
-                          )
-                        }
-                      />
-                      <span>{option.label}</span>
-                    </label>
-                  ))}
+                  <CheckboxPanel
+                    title="Categoría"
+                    subtitle="Filtra por categoría."
+                    loading={categoriesQ.isLoading}
+                    options={(categoriesQ.data ?? []).map((category) => ({
+                      value: category.id,
+                      label: category.name,
+                      description: category.code || null,
+                    }))}
+                    selected={invCategoryIds}
+                    onToggle={(value, checked) =>
+                      setInvCategoryIds((prev) =>
+                        toggleValue(prev, value, checked),
+                      )
+                    }
+                  />
+
+                  <CheckboxPanel
+                    title="Sede"
+                    subtitle="Filtra por sede."
+                    loading={sitesQ.isLoading}
+                    options={(sitesQ.data ?? []).map((site) => ({
+                      value: site.id,
+                      label: site.name,
+                    }))}
+                    selected={invSiteIds}
+                    onToggle={(value, checked) =>
+                      setInvSiteIds((prev) => toggleValue(prev, value, checked))
+                    }
+                  />
+
+                  <CheckboxPanel
+                    title="Bodega asignada"
+                    subtitle="Filtra por ubicación/bodega."
+                    loading={locationsQ.isLoading}
+                    maxHeight="max-h-56"
+                    options={(locationsQ.data ?? []).map((location) => ({
+                      value: location.id,
+                      label: location.name,
+                    }))}
+                    selected={invWarehouseIds}
+                    onToggle={(value, checked) =>
+                      setInvWarehouseIds((prev) =>
+                        toggleValue(prev, value, checked),
+                      )
+                    }
+                  />
                 </div>
-              </div>
+              </ReportCard>
+            )}
 
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">
-                  Categoría (multi)
-                </label>
-
-                <div className="border rounded-lg px-3 py-2 max-h-40 overflow-auto space-y-1">
-                  {categoriesQ.isLoading && (
-                    <p className="text-xs text-slate-400">
-                      Cargando categorías…
-                    </p>
-                  )}
-
-                  {categoriesQ.data?.map((category) => (
-                    <label
-                      key={category.id}
-                      className="flex items-center gap-2 text-xs sm:text-sm"
+            {canExportPeople && (
+              <ReportCard
+                title="Población / custodios"
+                description="Exporta la base de pacientes, nómina, OPS o terceros según los tipos seleccionados."
+                icon={<Users className="h-5 w-5" />}
+                badge={`${peopleTypeFilters.length} tipo(s)`}
+                footer={
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={clearPeopleFilters}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
                     >
-                      <input
-                        type="checkbox"
-                        className="rounded border"
-                        checked={invCategoryIds.includes(category.id)}
-                        onChange={(event) =>
-                          setInvCategoryIds((prev) =>
-                            toggleValue(
-                              prev,
-                              category.id,
-                              event.target.checked,
-                            ),
-                          )
-                        }
-                      />
-                      <span>
-                        {category.name}
-                        {category.code ? ` (${category.code})` : ''}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
+                      <RotateCcw className="h-4 w-4" />
+                      Limpiar
+                    </button>
 
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">
-                  Sede (multi)
-                </label>
-
-                <div className="border rounded-lg px-3 py-2 max-h-40 overflow-auto space-y-1">
-                  {sitesQ.isLoading && (
-                    <p className="text-xs text-slate-400">Cargando sedes…</p>
-                  )}
-
-                  {sitesQ.data?.map((site) => (
-                    <label
-                      key={site.id}
-                      className="flex items-center gap-2 text-xs sm:text-sm"
+                    <button
+                      type="button"
+                      onClick={downloadPeople}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#1B3859] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#132B45]"
                     >
-                      <input
-                        type="checkbox"
-                        className="rounded border"
-                        checked={invSiteIds.includes(site.id)}
-                        onChange={(event) =>
-                          setInvSiteIds((prev) =>
-                            toggleValue(prev, site.id, event.target.checked),
-                          )
-                        }
-                      />
-                      <span>{site.name}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="md:col-span-2 lg:col-span-4">
-                <label className="text-xs text-slate-500 block mb-1">
-                  Bodega asignada (multi)
-                </label>
-
-                <div className="border rounded-lg px-3 py-2 max-h-48 overflow-auto space-y-1">
-                  {locationsQ.isLoading && (
-                    <p className="text-xs text-slate-400">Cargando bodegas…</p>
-                  )}
-
-                  {locationsQ.data?.map((location) => (
-                    <label
-                      key={location.id}
-                      className="flex items-center gap-2 text-xs sm:text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        className="rounded border"
-                        checked={invWarehouseIds.includes(location.id)}
-                        onChange={(event) =>
-                          setInvWarehouseIds((prev) =>
-                            toggleValue(
-                              prev,
-                              location.id,
-                              event.target.checked,
-                            ),
-                          )
-                        }
-                      />
-                      <span>{location.name}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                className="rounded-lg bg-emerald-600 text-white px-4 py-2 text-sm hover:opacity-90"
-                onClick={downloadInventory}
+                      <Download className="h-4 w-4" />
+                      Descargar población
+                    </button>
+                  </div>
+                }
               >
-                Descargar inventario
-              </button>
-            </div>
-          </div>
-        )}
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <CheckboxPanel
+                    title="Tipo de usuario"
+                    subtitle="Sin selección exporta todos los tipos."
+                    options={PERSON_TYPES}
+                    selected={peopleTypeFilters}
+                    onToggle={(value, checked) =>
+                      setPeopleTypeFilters((prev) =>
+                        toggleValue(prev, value, checked),
+                      )
+                    }
+                  />
 
-        {canExportPeople && (
-          <div className="border rounded-xl bg-white dark:bg-slate-900 p-4 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <h2 className="font-medium">Población / Custodios (CSV)</h2>
-              <p className="text-xs text-slate-500">
-                Descarga la base de Pacientes, Nómina, OPS o Terceros.
-              </p>
-            </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 md:col-span-1 xl:col-span-3">
+                    <div className="flex items-start gap-3">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#3C9CD1]/10 text-[#1B3859]">
+                        <FileSpreadsheet className="h-5 w-5" />
+                      </div>
 
-            <div className="grid gap-3 md:grid-cols-1 lg:grid-cols-4">
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">
-                  Tipo de usuario
-                </label>
-
-                <div className="border rounded-lg px-3 py-2 max-h-40 overflow-auto space-y-1">
-                  {PERSON_TYPES.map((option) => (
-                    <label
-                      key={option.value}
-                      className="flex items-center gap-2 text-xs sm:text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        className="rounded border"
-                        checked={peopleTypeFilters.includes(option.value)}
-                        onChange={(event) =>
-                          setPeopleTypeFilters((prev) =>
-                            toggleValue(
-                              prev,
-                              option.value,
-                              event.target.checked,
-                            ),
-                          )
-                        }
-                      />
-                      <span>{option.label}</span>
-                    </label>
-                  ))}
+                      <div>
+                        <p className="text-sm font-semibold text-[#1B3859]">
+                          Exportación CSV
+                        </p>
+                        <p className="mt-1 text-sm leading-6 text-slate-600">
+                          Este reporte descarga población con los filtros de tipo
+                          aplicados. Si no marcas ningún tipo, el archivo sale completo.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
+              </ReportCard>
+            )}
 
-            <div className="flex justify-end">
-              <button
-                className="rounded-lg bg-sky-600 text-white px-4 py-2 text-sm hover:opacity-90"
-                onClick={downloadPeople}
+            {canExportMovements && (
+              <ReportCard
+                title="Movimientos"
+                description="Exporta historial de movimientos con filtros por fecha, activo, custodio o usuario administrativo."
+                icon={<ClipboardList className="h-5 w-5" />}
+                badge={`${movementSelectedCount} filtro(s)`}
+                footer={
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={clearMovementFilters}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      Limpiar
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={downloadMovements}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#1B3859] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#132B45]"
+                    >
+                      <Download className="h-4 w-4" />
+                      Descargar movimientos
+                    </button>
+                  </div>
+                }
               >
-                Descargar población
-              </button>
-            </div>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      <CalendarDays className="h-4 w-4" />
+                      Desde
+                    </label>
+
+                    <input
+                      type="date"
+                      className={`${smallInputClass()} mt-2`}
+                      value={from}
+                      onChange={(event) => setFrom(event.target.value)}
+                    />
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      <CalendarDays className="h-4 w-4" />
+                      Hasta
+                    </label>
+
+                    <input
+                      type="date"
+                      className={`${smallInputClass()} mt-2`}
+                      value={to}
+                      onChange={(event) => setTo(event.target.value)}
+                    />
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 md:col-span-2">
+                    <div className="flex items-start gap-3">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#3C9CD1]/10 text-[#1B3859]">
+                        <Filter className="h-5 w-5" />
+                      </div>
+
+                      <div>
+                        <p className="text-sm font-semibold text-[#1B3859]">
+                          Filtros combinables
+                        </p>
+                        <p className="mt-1 text-sm leading-6 text-slate-600">
+                          Puedes mezclar fechas, activos, custodios y usuarios administrativos.
+                          Si no seleccionas nada, se exporta todo el historial disponible.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-3">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="mb-3 flex items-start gap-3">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#3C9CD1]/10 text-[#1B3859]">
+                        <PackageCheck className="h-5 w-5" />
+                      </div>
+
+                      <div>
+                        <p className="text-sm font-semibold text-[#1B3859]">
+                          Activos fijos
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {movAssetIds.length} seleccionado(s)
+                        </p>
+                      </div>
+                    </div>
+
+                    <input
+                      className={smallInputClass()}
+                      placeholder="Buscar por código o nombre…"
+                      value={assetSearch}
+                      onChange={(event) => setAssetSearch(event.target.value)}
+                    />
+
+                    <div className="mt-3 max-h-64 space-y-1 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
+                      {assetsQ.isLoading ? (
+                        <div className="flex items-center gap-2 px-2 py-3 text-xs text-slate-400">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Cargando activos…
+                        </div>
+                      ) : filteredAssets.length === 0 ? (
+                        <p className="px-2 py-3 text-xs text-slate-400">
+                          Sin activos para mostrar.
+                        </p>
+                      ) : (
+                        filteredAssets.map((asset) => (
+                          <label
+                            key={asset.id}
+                            className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 text-xs text-slate-700 transition hover:bg-white sm:text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 rounded border-slate-300 text-[#1B3859] focus:ring-[#3C9CD1]"
+                              checked={movAssetIds.includes(asset.id)}
+                              onChange={(event) =>
+                                setMovAssetIds((prev) =>
+                                  toggleValue(prev, asset.id, event.target.checked),
+                                )
+                              }
+                            />
+
+                            <span className="min-w-0">
+                              <span className="block truncate font-semibold">
+                                {asset.tag || 'S/N'}
+                              </span>
+                              <span className="block truncate text-[11px] text-slate-500">
+                                {asset.name || 'Sin nombre'}
+                              </span>
+                            </span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="mb-3 flex items-start gap-3">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#54BF5B]/10 text-[#16803A]">
+                        <UserRound className="h-5 w-5" />
+                      </div>
+
+                      <div>
+                        <p className="text-sm font-semibold text-[#1B3859]">
+                          Custodios / pacientes
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {movPersonIds.length} seleccionado(s)
+                        </p>
+                      </div>
+                    </div>
+
+                    <input
+                      className={smallInputClass()}
+                      placeholder="Buscar por nombre o documento…"
+                      value={personSearch}
+                      onChange={(event) => setPersonSearch(event.target.value)}
+                    />
+
+                    <div className="mt-3 max-h-64 space-y-1 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
+                      {peopleQ.isLoading ? (
+                        <div className="flex items-center gap-2 px-2 py-3 text-xs text-slate-400">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Cargando custodios…
+                        </div>
+                      ) : filteredPeople.length === 0 ? (
+                        <p className="px-2 py-3 text-xs text-slate-400">
+                          Sin custodios para mostrar.
+                        </p>
+                      ) : (
+                        filteredPeople.map((person) => (
+                          <label
+                            key={person.id}
+                            className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 text-xs text-slate-700 transition hover:bg-white sm:text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 rounded border-slate-300 text-[#1B3859] focus:ring-[#3C9CD1]"
+                              checked={movPersonIds.includes(person.id)}
+                              onChange={(event) =>
+                                setMovPersonIds((prev) =>
+                                  toggleValue(prev, person.id, event.target.checked),
+                                )
+                              }
+                            />
+
+                            <span className="min-w-0">
+                              <span className="block truncate font-semibold">
+                                {person.fullName || 'Sin nombre'}
+                              </span>
+                              {person.documentId && (
+                                <span className="block truncate text-[11px] text-slate-500">
+                                  {person.documentId}
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="mb-3 flex items-start gap-3">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-amber-50 text-amber-800">
+                        <Shield className="h-5 w-5" />
+                      </div>
+
+                      <div>
+                        <p className="text-sm font-semibold text-[#1B3859]">
+                          Usuarios administrativos
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {movAdminIds.length} seleccionado(s)
+                        </p>
+                      </div>
+                    </div>
+
+                    <input
+                      className={smallInputClass()}
+                      placeholder="Buscar por nombre, correo o documento…"
+                      value={adminSearch}
+                      onChange={(event) => setAdminSearch(event.target.value)}
+                    />
+
+                    <div className="mt-3 max-h-64 space-y-1 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
+                      {usersQ.isLoading ? (
+                        <div className="flex items-center gap-2 px-2 py-3 text-xs text-slate-400">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Cargando usuarios…
+                        </div>
+                      ) : usersQ.isError ? (
+                        <p className="px-2 py-3 text-xs text-amber-600">
+                          No se pudo cargar este catálogo. Puedes exportar sin este filtro.
+                        </p>
+                      ) : filteredAdmins.length === 0 ? (
+                        <p className="px-2 py-3 text-xs text-slate-400">
+                          Sin usuarios para mostrar.
+                        </p>
+                      ) : (
+                        filteredAdmins.map((user) => (
+                          <label
+                            key={user.id}
+                            className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 text-xs text-slate-700 transition hover:bg-white sm:text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 rounded border-slate-300 text-[#1B3859] focus:ring-[#3C9CD1]"
+                              checked={movAdminIds.includes(user.id)}
+                              onChange={(event) =>
+                                setMovAdminIds((prev) =>
+                                  toggleValue(prev, user.id, event.target.checked),
+                                )
+                              }
+                            />
+
+                            <span className="min-w-0">
+                              <span className="block truncate font-semibold">
+                                {user.name || user.email}
+                              </span>
+                              <span className="block truncate text-[11px] text-slate-500">
+                                {user.email}
+                              </span>
+                            </span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </ReportCard>
+            )}
           </div>
-        )}
-
-        {canExportMovements && (
-          <div className="border rounded-xl bg-white dark:bg-slate-900 p-4 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <h2 className="font-medium">Movimientos (CSV)</h2>
-              <p className="text-xs text-slate-500">
-                Filtra por activos, custodios y usuarios administrativos.
-              </p>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <label className="text-xs text-slate-500">Desde</label>
-                <input
-                  type="date"
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                  value={from}
-                  onChange={(event) => setFrom(event.target.value)}
-                />
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-500">Hasta</label>
-                <input
-                  type="date"
-                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                  value={to}
-                  onChange={(event) => setTo(event.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-1 lg:grid-cols-3">
-              <div className="border rounded-lg p-3 flex flex-col gap-2">
-                <p className="text-sm font-medium">Activos fijos</p>
-
-                <input
-                  className="w-full rounded-lg border px-3 py-1.5 text-xs mb-2"
-                  placeholder="Buscar por código / nombre"
-                  value={assetSearch}
-                  onChange={(event) => setAssetSearch(event.target.value)}
-                />
-
-                <div className="border rounded-lg px-3 py-2 max-h-60 overflow-auto space-y-1">
-                  {assetsQ.isLoading && (
-                    <p className="text-xs text-slate-400">Cargando activos…</p>
-                  )}
-
-                  {filteredAssets.map((asset) => (
-                    <label
-                      key={asset.id}
-                      className="flex items-center gap-2 text-xs sm:text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        className="rounded border"
-                        checked={movAssetIds.includes(asset.id)}
-                        onChange={(event) =>
-                          setMovAssetIds((prev) =>
-                            toggleValue(prev, asset.id, event.target.checked),
-                          )
-                        }
-                      />
-                      <span>
-                        {asset.tag} — {asset.name}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="border rounded-lg p-3 flex flex-col gap-2">
-                <p className="text-sm font-medium">Usuarios custodios</p>
-
-                <input
-                  className="w-full rounded-lg border px-3 py-1.5 text-xs mb-2"
-                  placeholder="Buscar por nombre / documento"
-                  value={personSearch}
-                  onChange={(event) => setPersonSearch(event.target.value)}
-                />
-
-                <div className="border rounded-lg px-3 py-2 max-h-60 overflow-auto space-y-1">
-                  {peopleQ.isLoading && (
-                    <p className="text-xs text-slate-400">Cargando custodios…</p>
-                  )}
-
-                  {filteredPeople.map((person) => (
-                    <label
-                      key={person.id}
-                      className="flex items-center gap-2 text-xs sm:text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        className="rounded border"
-                        checked={movPersonIds.includes(person.id)}
-                        onChange={(event) =>
-                          setMovPersonIds((prev) =>
-                            toggleValue(prev, person.id, event.target.checked),
-                          )
-                        }
-                      />
-                      <span>
-                        {person.fullName}
-                        {person.documentId ? ` — ${person.documentId}` : ''}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="border rounded-lg p-3 flex flex-col gap-2">
-                <p className="text-sm font-medium">Usuarios administrativos</p>
-
-                <input
-                  className="w-full rounded-lg border px-3 py-1.5 text-xs mb-2"
-                  placeholder="Buscar por nombre / correo"
-                  value={adminSearch}
-                  onChange={(event) => setAdminSearch(event.target.value)}
-                />
-
-                <div className="border rounded-lg px-3 py-2 max-h-60 overflow-auto space-y-1">
-                  {usersQ.isLoading && (
-                    <p className="text-xs text-slate-400">
-                      Cargando usuarios administrativos…
-                    </p>
-                  )}
-
-                  {usersQ.isError && (
-                    <p className="text-xs text-amber-600">
-                      No se pudo cargar el catálogo de administradores. Puedes
-                      exportar movimientos sin este filtro.
-                    </p>
-                  )}
-
-                  {filteredAdmins.map((user) => (
-                    <label
-                      key={user.id}
-                      className="flex items-center gap-2 text-xs sm:text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        className="rounded border"
-                        checked={movAdminIds.includes(user.id)}
-                        onChange={(event) =>
-                          setMovAdminIds((prev) =>
-                            toggleValue(prev, user.id, event.target.checked),
-                          )
-                        }
-                      />
-                      <span>{user.name || user.email}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                className="rounded-lg bg-emerald-600 text-white px-4 py-2 text-sm hover:opacity-90"
-                onClick={downloadMovements}
-              >
-                Descargar movimientos
-              </button>
-            </div>
-          </div>
-        )}
-      </section>
+        </SectionCard>
+      </PageShell>
     </Guard>
   );
 }

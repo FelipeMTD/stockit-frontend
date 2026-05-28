@@ -1,78 +1,68 @@
 'use client';
 
-import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useMutation } from '@tanstack/react-query';
+import { ArrowLeft } from 'lucide-react';
+import { toast } from 'sonner';
 
-import AssetForm from '@/components/assets/asset-form';
-import { useRbacSession } from '@/lib/rbac-session';
+import Guard from '@/components/auth-guard';
+import { PageShell } from '@/components/common/page-shell';
+import { SectionCard } from '@/components/common/section-card';
+import AssetForm, {
+  type AssetFormPayload,
+} from '@/components/assets/asset-form';
+import { api, type Asset } from '@/lib/api';
 
 export default function NewAssetPage() {
   const router = useRouter();
 
-  const { role, caps, isAuthenticated } = useRbacSession();
+  const create = useMutation({
+    mutationFn: async (data: AssetFormPayload) =>
+      (await api.post<Asset>('/api/assets', data)).data,
+  });
 
-  const isDriver = role === 'CONDUCTOR';
-  const canCreateAsset = caps.editInventory;
+  async function handleSubmit(payload: AssetFormPayload) {
+    try {
+      const asset = await create.mutateAsync(payload);
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
+      toast.success('Activo creado correctamente');
+      router.replace(`/assets/${asset.id}`);
+    } catch (error: any) {
+      console.error('Error creando activo:', error?.response?.data ?? error);
 
-    if (isDriver) {
-      router.replace('/routes');
-      return;
+      toast.error(
+        error?.response?.data?.error ||
+          error?.response?.data?.message ||
+          'No se pudo crear el activo',
+      );
     }
-
-    if (!canCreateAsset) {
-      router.replace('/assets');
-    }
-  }, [isAuthenticated, isDriver, canCreateAsset, router]);
-
-  if (!isAuthenticated) {
-    return (
-      <div
-        data-testid="new-asset-session-loading"
-        className="rounded-xl border bg-white p-4 text-sm text-slate-500 dark:bg-slate-900 dark:text-slate-300"
-      >
-        Verificando sesión…
-      </div>
-    );
-  }
-
-  if (isDriver) {
-    return (
-      <div
-        data-testid="new-asset-driver-redirect"
-        className="rounded-xl border bg-white p-4 text-sm text-slate-500 dark:bg-slate-900 dark:text-slate-300"
-      >
-        Redirigiendo a rutas…
-      </div>
-    );
-  }
-
-  if (!canCreateAsset) {
-    return (
-      <div
-        data-testid="new-asset-denied"
-        className="rounded-xl border bg-white p-4 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300"
-      >
-        No tienes permisos para crear activos.
-      </div>
-    );
   }
 
   return (
-    <section data-testid="new-asset-page" className="space-y-3">
-      <div>
-        <h1 className="text-xl font-semibold">Nuevo Activo</h1>
-
-        {role && (
-          <p className="mt-1 text-xs text-slate-500">
-            Rol: {role}
-          </p>
-        )}
-      </div>
-
-      <AssetForm />
-    </section>
+    <Guard>
+      <PageShell>
+        <SectionCard
+          title="Crear activo"
+          contentClassName="p-0"
+          actions={
+            <button
+              type="button"
+              onClick={() => router.push('/assets')}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-[#1B3859] transition hover:bg-slate-50"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Volver
+            </button>
+          }
+        >
+          <AssetForm
+            mode="create"
+            isSubmitting={create.isPending}
+            onSubmit={handleSubmit}
+            onCancel={() => router.push('/assets')}
+          />
+        </SectionCard>
+      </PageShell>
+    </Guard>
   );
 }

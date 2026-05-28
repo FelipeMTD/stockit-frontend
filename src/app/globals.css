@@ -121,3 +121,11 @@
   }
 }
 
+.stock-scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.stock-scrollbar-none::-webkit-scrollbar {
+  display: none;
+}

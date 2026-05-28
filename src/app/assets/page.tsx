@@ -1,13 +1,17 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { Suspense, useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
+import { ArrowRightLeft, FileUp, Plus, X } from 'lucide-react';
 
 import AssetTable from '@/components/assets/asset-table';
 import ImportAssetsModal from '@/components/assets/import-assets-modal';
 import Guard from '@/components/auth-guard';
+
+import { PageShell } from '@/components/common/page-shell';
+import { SectionCard } from '@/components/common/section-card';
 import { api } from '@/lib/api';
 import { useRbacSession } from '@/lib/rbac-session';
 
@@ -40,7 +44,7 @@ export default function AssetsPage() {
   const router = useRouter();
   const qc = useQueryClient();
 
-  const { user, role, caps, isAuthenticated } = useRbacSession();
+  const { role, caps, isAuthenticated } = useRbacSession();
 
   const [showImport, setShowImport] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
@@ -90,6 +94,10 @@ export default function AssetsPage() {
     return tag.includes(normalizedSearch) || name.includes(normalizedSearch);
   });
 
+  const selectedAssets = assets.filter((asset) =>
+    selectedAssetIds.includes(asset.id),
+  );
+
   useEffect(() => {
     if (!showTransfer || !canManageAssets) return;
 
@@ -136,6 +144,13 @@ export default function AssetsPage() {
         ? prev.filter((item) => item !== id)
         : [...prev, id],
     );
+  };
+  const removeSelectedAsset = (id: string) => {
+    setSelectedAssetIds((prev) => prev.filter((item) => item !== id));
+  };
+
+  const clearSelectedAssets = () => {
+    setSelectedAssetIds([]);
   };
 
   const filteredLocations = locations.filter((location) => {
@@ -203,63 +218,80 @@ export default function AssetsPage() {
   return (
     <Guard>
       {isDriver ? (
-        <div className="p-4 text-sm text-slate-500">
-          Redirigiendo a rutas…
-        </div>
+        <PageShell>
+          <SectionCard>
+            <p className="text-sm text-slate-500">Redirigiendo a rutas…</p>
+          </SectionCard>
+        </PageShell>
       ) : !isAuthenticated ? (
-        <div className="p-4 text-sm text-slate-500">
-          Verificando sesión…
-        </div>
+        <PageShell>
+          <SectionCard>
+            <p className="text-sm text-slate-500">Verificando sesión…</p>
+          </SectionCard>
+        </PageShell>
       ) : !canViewAssets ? (
-        <div className="rounded-xl border bg-white p-4 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300">
-          No tienes permisos para ver inventario.
-        </div>
+        <PageShell>
+          <SectionCard>
+            <p className="text-sm text-slate-600">
+              No tienes permisos para ver inventario.
+            </p>
+          </SectionCard>
+        </PageShell>
       ) : (
-        <section className="space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h1 className="text-xl font-semibold">Activos</h1>
+        <PageShell>
+          <SectionCard
+            title="Listado de activos"
+            contentClassName="p-4 sm:p-5"
+            actions={
+              canManageAssets ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowTransfer(true)}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-[#1B3859] transition hover:bg-slate-50"
+                  >
+                    <ArrowRightLeft className="h-4 w-4" />
+                    Traslados
+                  </button>
 
-              {role && (
-                <p className="mt-1 text-xs text-slate-500">
-                  Rol: {role}
-                </p>
-              )}
+                  <button
+                    type="button"
+                    onClick={() => setShowImport(true)}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-[#1B3859] transition hover:bg-slate-50"
+                  >
+                    <FileUp className="h-4 w-4" />
+                    Importar CSV
+                  </button>
 
-              {user?.name && (
-                <p className="mt-0.5 text-xs text-slate-400">
-                  Usuario: {user.name}
-                </p>
-              )}
-            </div>
-
-            {canManageAssets && (
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => setShowTransfer(true)}
-                  className="rounded-xl border px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
-                >
-                  Traslados
-                </button>
-
-                <button
-                  onClick={() => setShowImport(true)}
-                  className="rounded-xl border px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
-                >
-                  Importar CSV
-                </button>
-
-                <Link
-                  href="/assets/new"
-                  className="rounded-xl bg-lime-500 px-4 py-2 text-sm text-white hover:bg-lime-600"
-                >
-                  Crear activo
-                </Link>
-              </div>
-            )}
-          </div>
-
-          <AssetTable />
+                  <Link
+                    href="/assets/new"
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#1B3859] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#132B45]"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Crear activo
+                  </Link>
+                </>
+              ) : null
+            }
+          >
+            <Suspense
+  fallback={
+    <div className="flex min-h-40 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-sm text-slate-500">
+      Cargando listado de activos…
+    </div>
+  }
+>
+  <Suspense
+  fallback={
+    <div className="flex min-h-40 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-sm text-slate-500">
+      Cargando listado de activos…
+    </div>
+  }
+>
+  <AssetTable />
+</Suspense>
+</Suspense>
+          </SectionCard>
 
           {canManageAssets && (
             <ImportAssetsModal
@@ -274,24 +306,41 @@ export default function AssetsPage() {
           )}
 
           {canManageAssets && showTransfer && (
-            <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-3">
-              <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-xl bg-white p-4 shadow-lg dark:bg-slate-900">
-                <h2 className="mb-3 text-base font-semibold">
-                  Traslado de activos
-                </h2>
+            <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/50 px-3 py-6 backdrop-blur-sm">
+              <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+                  <div>
+                   
+
+                    <h2 className="mt-1 text-lg font-semibold text-[#1B3859]">
+                      Traslado de activos
+                    </h2>
+
+                  
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleCloseTransfer}
+                    className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 text-slate-500 transition hover:bg-slate-50"
+                    aria-label="Cerrar traslado"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
 
                 <form
                   onSubmit={handleTransferSubmit}
-                  className="flex flex-1 flex-col gap-3 text-sm"
+                  className="flex flex-1 flex-col overflow-hidden text-sm"
                 >
-                  <div className="grid max-h-[60vh] gap-4 overflow-y-auto pr-1 md:grid-cols-2">
+                  <div className="grid flex-1 gap-5 overflow-y-auto px-5 py-5 md:grid-cols-2">
                     <div>
-                      <h3 className="mb-2 text-sm font-medium">
+                      <h3 className="mb-1 text-sm font-semibold text-[#1B3859]">
                         Activos en bodega
                       </h3>
 
-                      <p className="mb-2 text-xs text-slate-500">
-                        Solo se listan activos que están EN BODEGA / IN_STOCK.
+                      <p className="mb-3 text-xs leading-5 text-slate-500">
+                        Solo se listan activos que están EN BODEGA
                       </p>
 
                       <input
@@ -299,17 +348,15 @@ export default function AssetsPage() {
                         placeholder="Buscar por código o nombre…"
                         value={assetSearch}
                         onChange={(event) => setAssetSearch(event.target.value)}
-                        className="mb-2 w-full rounded border bg-white px-2 py-1 text-xs dark:bg-slate-950"
+                        className="stock-input mb-3 h-9 text-xs"
                       />
 
                       {loadingTransferData && (
-                        <p className="text-xs text-slate-500">
-                          Cargando activos…
-                        </p>
+                        <p className="text-xs text-slate-500">Cargando activos…</p>
                       )}
 
                       {transferError && (
-                        <p className="text-xs text-red-500">
+                        <p className="text-xs font-medium text-red-600">
                           {transferError}
                         </p>
                       )}
@@ -328,35 +375,41 @@ export default function AssetsPage() {
                           </p>
                         )}
 
-                      <div className="max-h-64 space-y-1 overflow-y-auto rounded border bg-white p-2 dark:bg-slate-950">
+                      <div className="mt-3 max-h-72 space-y-1 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/70 p-2">
                         {visibleAssets.map((asset) => (
                           <label
                             key={asset.id}
-                            className="flex cursor-pointer items-center gap-2 text-xs"
+                            className={[
+                              'flex cursor-pointer items-center gap-2 rounded-xl px-2 py-2 text-xs transition',
+                              selectedAssetIds.includes(asset.id)
+                                ? 'bg-[#54BF5B]/10 ring-1 ring-[#54BF5B]/30'
+                                : 'hover:bg-white',
+                            ].join(' ')}
                           >
                             <input
                               type="checkbox"
-                              className="h-3 w-3"
+                              className="h-4 w-4 rounded border-slate-300 accent-[#1B3859]"
                               checked={selectedAssetIds.includes(asset.id)}
                               onChange={() => toggleAsset(asset.id)}
                             />
 
-                            <span className="truncate">
-                              <b>{asset.tag}</b> — {asset.name}
+                            <span className="min-w-0 truncate text-slate-600">
+                              <b className="text-[#1B3859]">{asset.tag}</b> —{' '}
+                              {asset.name}
                             </span>
                           </label>
                         ))}
                       </div>
                     </div>
 
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                       <div>
-                        <label className="mb-1 block text-xs text-slate-500">
+                        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
                           Sede destino opcional
                         </label>
 
                         <select
-                          className="w-full rounded border bg-white px-2 py-1.5 text-sm dark:bg-slate-950"
+                          className="stock-select"
                           value={targetSiteId}
                           onChange={(event) => {
                             setTargetSiteId(event.target.value);
@@ -375,16 +428,14 @@ export default function AssetsPage() {
                       </div>
 
                       <div>
-                        <label className="mb-1 block text-xs text-slate-500">
+                        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
                           Bodega / ubicación destino
                         </label>
 
                         <select
-                          className="w-full rounded border bg-white px-2 py-1.5 text-sm dark:bg-slate-950"
+                          className="stock-select"
                           value={targetLocationId}
-                          onChange={(event) =>
-                            setTargetLocationId(event.target.value)
-                          }
+                          onChange={(event) => setTargetLocationId(event.target.value)}
                           required
                         >
                           <option value="">Selecciona…</option>
@@ -393,22 +444,88 @@ export default function AssetsPage() {
                             <option key={location.id} value={location.id}>
                               {location.name}
                               {location.code ? ` (${location.code})` : ''}
-                              {location.site?.name
-                                ? ` — ${location.site.name}`
-                                : ''}
+                              {location.site?.name ? ` — ${location.site.name}` : ''}
                             </option>
                           ))}
                         </select>
                       </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                              Activos seleccionados
+                            </p>
+
+                            <p className="mt-1 text-sm text-slate-600">
+                              Total:{' '}
+                              <b className="text-[#1B3859]">{selectedAssets.length}</b>
+                            </p>
+                          </div>
+
+                          {selectedAssets.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={clearSelectedAssets}
+                              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                            >
+                              Limpiar
+                            </button>
+                          )}
+                        </div>
+
+                        {selectedAssets.length === 0 ? (
+                          <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center">
+                            <p className="text-xs text-slate-500">
+                              Aún no has seleccionado activos.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="mt-4 max-h-64 space-y-2 overflow-y-auto pr-1">
+                            {selectedAssets.map((asset) => (
+                              <div
+                                key={asset.id}
+                                className="flex items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2"
+                              >
+                                <div className="min-w-0">
+                                  <p
+                                    className="truncate text-xs font-bold text-[#1B3859]"
+                                    title={asset.tag}
+                                  >
+                                    {asset.tag}
+                                  </p>
+
+                                  <p
+                                    className="mt-0.5 line-clamp-2 text-xs leading-5 text-slate-500"
+                                    title={asset.name}
+                                  >
+                                    {asset.name}
+                                  </p>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => removeSelectedAsset(asset.id)}
+                                  className="grid h-7 w-7 shrink-0 place-items-center rounded-xl text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                                  aria-label={`Quitar ${asset.tag}`}
+                                  title="Quitar seleccionado"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  <div className="mt-3 flex justify-end gap-2">
+                  <div className="flex flex-col-reverse gap-2 border-t border-slate-200 px-5 py-4 sm:flex-row sm:justify-end">
                     <button
                       type="button"
                       onClick={handleCloseTransfer}
-                      className="rounded-lg border px-3 py-1.5 text-xs"
                       disabled={savingTransfer}
+                      className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       Cancelar
                     </button>
@@ -416,7 +533,7 @@ export default function AssetsPage() {
                     <button
                       type="submit"
                       disabled={savingTransfer || loadingTransferData}
-                      className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-60"
+                      className="inline-flex h-10 items-center justify-center rounded-xl bg-[#1B3859] px-4 text-sm font-semibold text-white transition hover:bg-[#132B45] disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {savingTransfer ? 'Guardando…' : 'Guardar traslado'}
                     </button>
@@ -425,7 +542,7 @@ export default function AssetsPage() {
               </div>
             </div>
           )}
-        </section>
+        </PageShell>
       )}
     </Guard>
   );

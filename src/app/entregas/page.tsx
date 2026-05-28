@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import Guard from '@/components/auth-guard';
 import SignaturePad from '@/components/ui/signature-pad';
+import { PageShell } from '@/components/common/page-shell';
+import { SectionCard } from '@/components/common/section-card';
 import { api } from '@/lib/api';
 import { normalizeRole, type AppRole } from '@/lib/roles';
 
@@ -53,6 +55,8 @@ type HandoverItem = {
   asset?: Asset | null;
 };
 
+type HandoverType = 'ENTREGA' | 'RECOGIDA';
+
 type Handover = {
   id: string;
   type: HandoverType;
@@ -65,7 +69,17 @@ type Handover = {
   notes?: string | null;
   reason?: string | null;
   signatureData?: string | null;
+
   attachmentPath?: string | null;
+  attachmentName?: string | null;
+  attachmentMime?: string | null;
+
+  comodatoPath?: string | null;
+  comodatoUrl?: string | null;
+  comodatoDownloadUrl?: string | null;
+  attachmentUrl?: string | null;
+  attachmentDownloadUrl?: string | null;
+
   person?: Person | null;
   items?: HandoverItem[];
   createdBy?: {
@@ -75,7 +89,12 @@ type Handover = {
   } | null;
 };
 
-type HandoverType = 'ENTREGA' | 'RECOGIDA';
+type PreviewFile = {
+  url: string;
+  name: string;
+  isImage: boolean;
+  objectUrl?: boolean;
+};
 
 type Relation =
   | 'HIJA'
@@ -125,6 +144,7 @@ type FormState = {
 };
 
 type PageSizeOption = 10 | 50 | 100 | 'ALL';
+type HistoryPageSizeOption = 6 | 12 | 24 | 'ALL';
 
 const RELATIONS: Relation[] = [
   'HIJA',
@@ -190,11 +210,16 @@ function getApiBase() {
 
 function getStoredRole(): AppRole | null {
   if (typeof window === 'undefined') return null;
+
   return normalizeRole(localStorage.getItem('user_role'));
 }
 
 function canUseHandoverRole(role: AppRole | null) {
-  return role === 'SUPER_ADMIN' || role === 'ACTIVOS_FIJOS' || role === 'INVENTARIO';
+  return (
+    role === 'SUPER_ADMIN' ||
+    role === 'ACTIVOS_FIJOS' ||
+    role === 'INVENTARIO'
+  );
 }
 
 function emptyForm(): FormState {
@@ -233,6 +258,7 @@ function normalizeFinalStatus(value?: string | null) {
 
 function isActivePerson(person: Person) {
   if (person.inactivityDate) return false;
+
   return normalizeFinalStatus(person.finalStatus) === 'ACTIVO';
 }
 
@@ -245,6 +271,41 @@ function assetSearchMatch(asset: Asset, q: string) {
     String(asset.tag || '').toLowerCase().includes(term) ||
     String(asset.name || '').toLowerCase().includes(term) ||
     String(asset.category?.name || '').toLowerCase().includes(term)
+  );
+}
+
+function handoverSearchMatch(handover: Handover, q: string) {
+  const term = q.trim().toLowerCase();
+
+  if (!term) return true;
+
+  const personName = String(handover.person?.fullName || '').toLowerCase();
+  const personDoc = String(handover.person?.documentId || '').toLowerCase();
+  const reason = String(handover.reason || '').toLowerCase();
+  const type = String(handover.type || '').toLowerCase();
+  const signerName = String(handover.signerName || '').toLowerCase();
+  const signerId = String(handover.signerId || '').toLowerCase();
+
+  const assetsText = (handover.items || [])
+    .map((item) =>
+      [
+        item.asset?.tag || '',
+        item.asset?.name || '',
+        item.asset?.category?.name || '',
+      ]
+        .join(' ')
+        .toLowerCase(),
+    )
+    .join(' ');
+
+  return (
+    personName.includes(term) ||
+    personDoc.includes(term) ||
+    reason.includes(term) ||
+    type.includes(term) ||
+    signerName.includes(term) ||
+    signerId.includes(term) ||
+    assetsText.includes(term)
   );
 }
 
@@ -270,7 +331,102 @@ function getSecureUrl(rawPath: string) {
   return encodeURI(`${getApiBase()}/${clean.replace(/^\/+/, '')}`);
 }
 
-function SimplePicker<T extends { id: string; fullName?: string | null; email?: string | null; documentId?: string | null }>(props: {
+function toAbsoluteApiUrl(url?: string | null) {
+  if (!url) return '';
+
+  if (/^https?:\/\//i.test(url)) {
+    return url;
+  }
+
+  return `${getApiBase()}${url.startsWith('/') ? url : `/${url}`}`;
+}
+
+function getHandoverComodatoUrl(handover?: Handover | null) {
+  if (!handover) return null;
+
+  if (handover.comodatoUrl) {
+    return handover.comodatoUrl;
+  }
+
+  return `/api/handover/${handover.id}/comodato?inline=1`;
+}
+
+function getHandoverComodatoDownloadUrl(handover?: Handover | null) {
+  if (!handover) return null;
+
+  if (handover.comodatoDownloadUrl) {
+    return handover.comodatoDownloadUrl;
+  }
+
+  return `/api/handover/${handover.id}/comodato`;
+}
+
+function getHandoverAttachmentUrl(handover?: Handover | null) {
+  if (!handover) return null;
+
+  if (handover.attachmentUrl) {
+    return handover.attachmentUrl;
+  }
+
+  if (handover.attachmentPath) {
+    return `/api/handover/${handover.id}/attachment?inline=1`;
+  }
+
+  return null;
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return '—';
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return '—';
+
+  return date.toLocaleString('es-CO');
+}
+
+function Field({
+  label,
+  children,
+  hint,
+  required,
+}: {
+  label: string;
+  children: ReactNode;
+  hint?: string;
+  required?: boolean;
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+        {label}
+        {required && <span className="ml-1 text-red-500">*</span>}
+      </label>
+
+      {children}
+
+      {hint && <p className="text-xs leading-5 text-slate-500">{hint}</p>}
+    </div>
+  );
+}
+
+const inputClassName =
+  'h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10';
+
+const selectClassName =
+  'h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10';
+
+const textAreaClassName =
+  'min-h-24 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10';
+
+function SimplePicker<
+  T extends {
+    id: string;
+    fullName?: string | null;
+    email?: string | null;
+    documentId?: string | null;
+  },
+>(props: {
   items: T[];
   value?: string | null;
   onChange: (id: string) => void;
@@ -283,7 +439,7 @@ function SimplePicker<T extends { id: string; fullName?: string | null; email?: 
     value,
     onChange,
     disabled,
-    placeholder = '— Seleccionar —',
+    placeholder = 'Seleccionar…',
     subtitleOf,
   } = props;
 
@@ -319,29 +475,31 @@ function SimplePicker<T extends { id: string; fullName?: string | null; email?: 
         type="button"
         disabled={disabled}
         onClick={() => setOpen((state) => !state)}
-        className="w-full rounded-xl border px-3 py-2 text-left text-sm bg-white dark:bg-slate-950 disabled:opacity-60 focus:border-sky-600 outline-none"
+        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-left text-sm text-slate-800 shadow-sm outline-none transition hover:bg-slate-50 focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {selected ? selected.fullName || selected.email || '—' : placeholder}
+        <span className="block truncate">
+          {selected ? selected.fullName || selected.email || '—' : placeholder}
+        </span>
       </button>
 
       {open && (
-        <div className="absolute z-30 mt-1 w-full rounded-xl border bg-white dark:bg-slate-950 shadow-xl">
-          <div className="p-2 border-b">
+        <div className="absolute z-30 mt-2 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
+          <div className="border-b border-slate-200 p-2">
             <input
               autoFocus
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
               placeholder="Buscar…"
-              className="w-full rounded-lg border px-3 py-2 text-sm bg-slate-50 dark:bg-slate-900 outline-none focus:border-sky-600"
+              className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800 outline-none transition focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10"
             />
           </div>
 
           <div className="max-h-64 overflow-y-auto">
             {filtered.length === 0 && (
-              <div className="p-3 text-xs text-slate-500">Sin resultados.</div>
+              <div className="p-4 text-sm text-slate-500">Sin resultados.</div>
             )}
 
-            <ul>
+            <ul className="divide-y divide-slate-100">
               {filtered.map((item) => (
                 <li key={item.id}>
                   <button
@@ -350,16 +508,17 @@ function SimplePicker<T extends { id: string; fullName?: string | null; email?: 
                       onChange(item.id);
                       setOpen(false);
                     }}
-                    className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 ${
-                      item.id === value ? 'bg-sky-50 dark:bg-slate-800' : ''
-                    }`}
+                    className={[
+                      'w-full px-3 py-2.5 text-left text-sm transition hover:bg-slate-50',
+                      item.id === value ? 'bg-[#3C9CD1]/10' : '',
+                    ].join(' ')}
                   >
-                    <div className="font-medium truncate">
+                    <div className="truncate font-semibold text-[#111827]">
                       {item.fullName || item.email || '—'}
                     </div>
 
                     {subtitleOf && (
-                      <div className="text-[10px] text-slate-500 truncate mt-0.5 font-bold uppercase">
+                      <div className="mt-0.5 truncate text-xs text-slate-500">
                         {subtitleOf(item) || '—'}
                       </div>
                     )}
@@ -369,11 +528,11 @@ function SimplePicker<T extends { id: string; fullName?: string | null; email?: 
             </ul>
           </div>
 
-          <div className="p-2 border-t flex justify-end bg-slate-50 rounded-b-xl">
+          <div className="flex justify-end border-t border-slate-200 bg-slate-50 p-2">
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="rounded-lg border bg-white px-4 py-1.5 text-xs font-bold shadow-sm hover:bg-slate-100"
+              className="inline-flex h-8 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
             >
               Cerrar
             </button>
@@ -433,7 +592,7 @@ function DriverPicker(props: {
       value={props.value ?? undefined}
       onChange={props.onChange}
       disabled={props.disabled}
-      placeholder={props.placeholder ?? '— Seleccionar conductor —'}
+      placeholder={props.placeholder ?? 'Seleccionar conductor'}
       subtitleOf={(user) => user.email || null}
     />
   );
@@ -447,7 +606,15 @@ export default function HandoverPage() {
   const [roleReady, setRoleReady] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'NEW' | 'HISTORY'>('NEW');
-  const [selectedHandover, setSelectedHandover] = useState<Handover | null>(null);
+  const [selectedHandover, setSelectedHandover] =
+    useState<Handover | null>(null);
+  const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
+
+  const [historyQ, setHistoryQ] = useState('');
+  const [historyType, setHistoryType] = useState<'ALL' | HandoverType>('ALL');
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] =
+    useState<HistoryPageSizeOption>(6);
 
   const [form, setForm] = useState<FormState>(emptyForm());
   const [assetQ, setAssetQ] = useState('');
@@ -497,15 +664,17 @@ export default function HandoverPage() {
   });
 
   const availableAssetsQ = useQuery<Asset[]>({
-    queryKey: ['handover-available-assets', assetQ],
+    queryKey: ['handover-available-assets'],
     enabled: roleReady && canUseHandover && form.type === 'ENTREGA',
     queryFn: async (): Promise<Asset[]> => {
-      const res = await api.get<{ items: Asset[] }>('/api/handover/available-assets', {
-        params: {
-          pageSize: 5000,
-          q: assetQ.trim() || undefined,
+      const res = await api.get<{ items: Asset[] }>(
+        '/api/handover/available-assets',
+        {
+          params: {
+            pageSize: 5000,
+          },
         },
-      });
+      );
 
       return res.data.items ?? [];
     },
@@ -533,13 +702,66 @@ export default function HandoverPage() {
     queryFn: async (): Promise<Handover[]> => {
       const res = await api.get<{ items: Handover[] }>('/api/handover', {
         params: {
-          pageSize: 100,
+          pageSize: 500,
         },
       });
 
       return res.data.items ?? [];
     },
   });
+
+  const handovers = handoversQ.data ?? [];
+
+  const filteredHandovers = useMemo(() => {
+    let source = handovers;
+
+    if (historyType !== 'ALL') {
+      source = source.filter((handover) => handover.type === historyType);
+    }
+
+    source = source.filter((handover) =>
+      handoverSearchMatch(handover, historyQ),
+    );
+
+    return source;
+  }, [handovers, historyType, historyQ]);
+
+  const historyTotal = handovers.length;
+
+  const historyEntregaTotal = handovers.filter(
+    (handover) => handover.type === 'ENTREGA',
+  ).length;
+
+  const historyRecogidaTotal = handovers.filter(
+    (handover) => handover.type === 'RECOGIDA',
+  ).length;
+
+  const historyTotalPages =
+    historyPageSize === 'ALL'
+      ? 1
+      : Math.max(1, Math.ceil(filteredHandovers.length / historyPageSize));
+
+  const paginatedHandovers = useMemo(() => {
+    if (historyPageSize === 'ALL') return filteredHandovers;
+
+    const start = (historyPage - 1) * historyPageSize;
+
+    return filteredHandovers.slice(start, start + historyPageSize);
+  }, [filteredHandovers, historyPage, historyPageSize]);
+
+  const historyStart =
+    filteredHandovers.length === 0
+      ? 0
+      : historyPageSize === 'ALL'
+        ? 1
+        : (historyPage - 1) * historyPageSize + 1;
+
+  const historyEnd =
+    filteredHandovers.length === 0
+      ? 0
+      : historyPageSize === 'ALL'
+        ? filteredHandovers.length
+        : Math.min(filteredHandovers.length, historyPage * historyPageSize);
 
   const visiblePeople = useMemo(() => {
     const arr = peopleQ.data ?? [];
@@ -575,12 +797,10 @@ export default function HandoverPage() {
       source = source.filter((asset) => selected.has(asset.id));
     }
 
-    if (form.type === 'RECOGIDA') {
-      source = source.filter((asset) => assetSearchMatch(asset, assetQ));
-    }
+    source = source.filter((asset) => assetSearchMatch(asset, assetQ));
 
     return source;
-  }, [baseVisibleAssets, assetQ, showOnlySelected, form.assetIds, form.type]);
+  }, [baseVisibleAssets, assetQ, showOnlySelected, form.assetIds]);
 
   const totalPages =
     pageSize === 'ALL'
@@ -595,14 +815,11 @@ export default function HandoverPage() {
     return visibleAssets.slice(start, start + pageSize);
   }, [visibleAssets, page, pageSize]);
 
-  useEffect(() => {
-    setForm((state) => ({
-      ...state,
-      assetIds: [],
-      reason: '',
-      personId: state.type === form.type ? state.personId : '',
-    }));
-  }, [form.type]);
+  const selectedAssets = useMemo(() => {
+    const selected = new Set(form.assetIds);
+
+    return baseVisibleAssets.filter((asset) => selected.has(asset.id));
+  }, [baseVisibleAssets, form.assetIds]);
 
   useEffect(() => {
     setShowOnlySelected(false);
@@ -612,6 +829,16 @@ export default function HandoverPage() {
   useEffect(() => {
     setPage(1);
   }, [assetQ, pageSize, showOnlySelected]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [historyQ, historyType, historyPageSize]);
+
+  useEffect(() => {
+    if (historyPage > historyTotalPages) {
+      setHistoryPage(historyTotalPages);
+    }
+  }, [historyPage, historyTotalPages]);
 
   useEffect(() => {
     if (!form.homeDelivery) return;
@@ -627,6 +854,17 @@ export default function HandoverPage() {
       signatureData: null,
     }));
   }, [form.homeDelivery]);
+
+  function handleTypeChange(nextType: HandoverType) {
+    setForm({
+      ...emptyForm(),
+      type: nextType,
+    });
+
+    setAssetQ('');
+    setShowOnlySelected(false);
+    setPage(1);
+  }
 
   function toggleAsset(id: string) {
     setForm((state) => ({
@@ -654,18 +892,12 @@ export default function HandoverPage() {
         state.homeDelivery && state.scheduledDate
           ? state.scheduledDate
           : null,
+      personId: state.personId,
       items: state.assetIds.map((assetId) => ({
         assetId,
         quantity: 1,
       })),
     };
-
-    if (state.type === 'ENTREGA') {
-      return {
-        ...base,
-        personId: state.personId,
-      };
-    }
 
     return base;
   }
@@ -676,7 +908,9 @@ export default function HandoverPage() {
       fileToUpload: File | null;
     }) => {
       if (!canUseHandover) {
-        throw new Error('No tienes permisos para gestionar entregas y recogidas.');
+        throw new Error(
+          'No tienes permisos para gestionar entregas y recogidas.',
+        );
       }
 
       const { formState, fileToUpload } = vars;
@@ -688,7 +922,10 @@ export default function HandoverPage() {
       const allowedValues =
         formState.type === 'ENTREGA' ? DELIVERY_REASONS : PICKUP_REASONS;
 
-      if (!formState.reason || !allowedValues.includes(formState.reason as any)) {
+      if (
+        !formState.reason ||
+        !allowedValues.includes(formState.reason as any)
+      ) {
         throw new Error(
           `Selecciona un motivo válido para ${
             formState.type === 'ENTREGA' ? 'ENTREGA' : 'RECOGIDA'
@@ -713,7 +950,9 @@ export default function HandoverPage() {
       }
 
       if (formState.homeDelivery && !formState.scheduledDate) {
-        throw new Error('Selecciona la fecha programada de la ruta a domicilio.');
+        throw new Error(
+          'Selecciona la fecha programada de la ruta a domicilio.',
+        );
       }
 
       if (!formState.homeDelivery) {
@@ -783,14 +1022,23 @@ export default function HandoverPage() {
 
       setForm(emptyForm());
       setShowOnlySelected(false);
+      setAssetQ('');
       setAttachment(null);
       setFileKey(Date.now());
       setActiveTab('HISTORY');
 
-      qc.invalidateQueries({ queryKey: ['handover-available-assets'] });
-      qc.invalidateQueries({ queryKey: ['handover-assets-by-person'] });
-      qc.invalidateQueries({ queryKey: ['handovers-history'] });
-      qc.invalidateQueries({ queryKey: ['routes'] });
+      qc.invalidateQueries({
+        queryKey: ['handover-available-assets'],
+      });
+      qc.invalidateQueries({
+        queryKey: ['handover-assets-by-person'],
+      });
+      qc.invalidateQueries({
+        queryKey: ['handovers-history'],
+      });
+      qc.invalidateQueries({
+        queryKey: ['routes'],
+      });
     },
     onError: (error: any) => {
       toast.error(
@@ -811,12 +1059,57 @@ export default function HandoverPage() {
     });
   }
 
+  const handlePreviewApiFile = async (url: string, name: string) => {
+    try {
+      if (previewFile?.objectUrl) {
+        window.URL.revokeObjectURL(previewFile.url);
+      }
+
+      const res = await api.get(url, {
+        responseType: 'blob',
+      });
+
+      const mime = res.headers?.['content-type'] || 'application/pdf';
+
+      const blob = new Blob([res.data], {
+        type: mime,
+      });
+
+      const objectUrl = window.URL.createObjectURL(blob);
+
+      setPreviewFile({
+        url: objectUrl,
+        name,
+        isImage: mime.startsWith('image/'),
+        objectUrl: true,
+      });
+    } catch (error: any) {
+      console.error('Error abriendo archivo del trámite:', error?.response ?? error);
+
+      toast.error(
+        error?.response?.data?.error ||
+          error?.message ||
+          'No se pudo abrir el archivo.',
+      );
+    }
+  };
+
+  const handleClosePreview = () => {
+    if (previewFile?.objectUrl) {
+      window.URL.revokeObjectURL(previewFile.url);
+    }
+
+    setPreviewFile(null);
+  };
+
   if (!roleReady) {
     return (
       <Guard>
-        <div className="rounded-xl border bg-white p-4 text-sm text-slate-500 dark:bg-slate-900 dark:text-slate-300">
-          Verificando permisos…
-        </div>
+        <PageShell>
+          <SectionCard>
+            <p className="text-sm text-slate-500">Verificando permisos…</p>
+          </SectionCard>
+        </PageShell>
       </Guard>
     );
   }
@@ -824,773 +1117,1161 @@ export default function HandoverPage() {
   if (!canUseHandover) {
     return (
       <Guard>
-        <div className="rounded-xl border bg-white p-4 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300">
-          No tienes permisos para gestionar entregas y recogidas.
-        </div>
+        <PageShell>
+          <SectionCard>
+            <p className="text-sm text-slate-600">
+              No tienes permisos para gestionar entregas y recogidas.
+            </p>
+          </SectionCard>
+        </PageShell>
       </Guard>
     );
   }
 
   return (
     <Guard>
-      <section className="space-y-6 font-poppins mx-auto max-w-7xl pb-20">
-        <div className="border-b border-slate-200">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">
-                Gestión Logística
-              </h1>
-              <p className="mt-1 text-sm text-slate-500">
-                Registro de entregas, recogidas y rutas a domicilio.
-              </p>
+      <PageShell>
+        <SectionCard
+          title="Entregas y recogidas"
+          contentClassName="p-0"
+          actions={
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveTab('NEW')}
+                className={[
+                  'inline-flex h-10 items-center justify-center rounded-xl px-4 text-sm font-semibold transition',
+                  activeTab === 'NEW'
+                    ? 'bg-[#1B3859] text-white shadow-sm hover:bg-[#132B45]'
+                    : 'border border-slate-200 bg-white text-[#1B3859] hover:bg-slate-50',
+                ].join(' ')}
+              >
+                Nuevo registro
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('HISTORY')}
+                className={[
+                  'inline-flex h-10 items-center justify-center rounded-xl px-4 text-sm font-semibold transition',
+                  activeTab === 'HISTORY'
+                    ? 'bg-[#1B3859] text-white shadow-sm hover:bg-[#132B45]'
+                    : 'border border-slate-200 bg-white text-[#1B3859] hover:bg-slate-50',
+                ].join(' ')}
+              >
+                Historial
+              </button>
             </div>
-          </div>
+          }
+        >
+          <div className="p-4 sm:p-5">
+            {activeTab === 'NEW' && (
+              <form onSubmit={submit} className="grid gap-6 xl:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-5 border-b border-slate-200 pb-4">
+                    <h2 className="text-sm font-semibold text-[#1B3859]">
+                      Datos del trámite
+                    </h2>
 
-          <div className="flex gap-6">
-            <button
-              onClick={() => setActiveTab('NEW')}
-              className={`pb-3 text-xs font-black uppercase tracking-widest transition-all ${
-                activeTab === 'NEW'
-                  ? 'border-b-4 border-sky-600 text-sky-700'
-                  : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              Nuevo Registro
-            </button>
-
-            <button
-              onClick={() => setActiveTab('HISTORY')}
-              className={`pb-3 text-xs font-black uppercase tracking-widest transition-all ${
-                activeTab === 'HISTORY'
-                  ? 'border-b-4 border-sky-600 text-sky-700'
-                  : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              Historial de Trámites
-            </button>
-          </div>
-        </div>
-
-        {activeTab === 'NEW' && (
-          <form onSubmit={submit} className="grid gap-6 lg:grid-cols-2">
-            <div className="border rounded-2xl bg-white dark:bg-slate-900 p-6 shadow-sm space-y-5">
-              <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b pb-2">
-                1. Datos del trámite
-              </h2>
-
-              <div className="grid gap-1.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">
-                  Tipo de movimiento
-                </label>
-
-                <select
-                  className="rounded-xl border px-3 py-3 text-sm bg-slate-50 dark:bg-slate-950 font-bold text-slate-800 outline-none focus:border-sky-600"
-                  value={form.type}
-                  onChange={(event) =>
-                    setForm({
-                      ...emptyForm(),
-                      type: event.target.value as HandoverType,
-                    })
-                  }
-                >
-                  <option value="ENTREGA">ENTREGA DE EQUIPO</option>
-                  <option value="RECOGIDA">RECOGIDA DE EQUIPO</option>
-                </select>
-              </div>
-
-              <div className="grid gap-1.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">
-                  Usuario / custodio
-                </label>
-
-                <UserPicker
-                  people={visiblePeople}
-                  value={form.personId}
-                  onChange={(id) =>
-                    setForm((state) => ({
-                      ...state,
-                      personId: id,
-                      assetIds: [],
-                    }))
-                  }
-                  placeholder={
-                    form.type === 'ENTREGA'
-                      ? 'Seleccione usuario que recibirá'
-                      : 'Seleccione usuario para recoger equipos'
-                  }
-                />
-              </div>
-
-              <div className="grid gap-1.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">
-                  Motivo
-                </label>
-
-                <select
-                  className="rounded-xl border px-3 py-3 text-sm bg-slate-50 dark:bg-slate-950 outline-none focus:border-sky-600"
-                  value={form.reason}
-                  onChange={(event) =>
-                    setForm((state) => ({
-                      ...state,
-                      reason: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="">Seleccione motivo…</option>
-
-                  {reasonOptions.map((reason) => (
-                    <option key={reason} value={reason}>
-                      {reason}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="rounded-xl border border-sky-100 bg-sky-50 p-4">
-                <div className="flex items-center gap-3">
-                  <input
-                    id="homeDelivery"
-                    type="checkbox"
-                    className="h-5 w-5 rounded text-sky-600 focus:ring-sky-600"
-                    checked={form.homeDelivery}
-                    onChange={(event) =>
-                      setForm((state) => ({
-                        ...state,
-                        homeDelivery: event.target.checked,
-                      }))
-                    }
-                  />
-
-                  <label
-                    htmlFor="homeDelivery"
-                    className="text-sm font-bold text-sky-900 cursor-pointer select-none"
-                  >
-                    Gestionar a través de ruta / transporte
-                  </label>
-                </div>
-
-                {form.homeDelivery && (
-                  <p className="text-[10px] text-sky-700 ml-8 mt-1 leading-relaxed">
-                    El inventario y la firma del paciente se procesarán cuando el
-                    conductor finalice la ruta en terreno.
-                  </p>
-                )}
-              </div>
-
-              {form.homeDelivery && (
-                <div className="grid gap-4 pt-4 border-t border-slate-100">
-                  <div className="grid gap-1.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">
-                      Conductor
-                    </label>
-
-                    <DriverPicker
-                      drivers={driversQ.data ?? []}
-                      value={form.driverId}
-                      onChange={(id) =>
-                        setForm((state) => ({
-                          ...state,
-                          driverId: id,
-                        }))
-                      }
-                    />
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Define el tipo de movimiento, custodio, motivo y datos de
+                      recepción.
+                    </p>
                   </div>
 
-                  <div className="grid gap-1.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">
-                      Fecha programada
-                    </label>
+                  <div className="space-y-5">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <Field label="Tipo de movimiento" required>
+                        <select
+                          className={selectClassName}
+                          value={form.type}
+                          onChange={(event) =>
+                            handleTypeChange(event.target.value as HandoverType)
+                          }
+                        >
+                          <option value="ENTREGA">Entrega de equipo</option>
+                          <option value="RECOGIDA">Recogida de equipo</option>
+                        </select>
+                      </Field>
 
-                    <input
-                      type="date"
-                      className="rounded-xl border px-3 py-2 text-sm bg-white dark:bg-slate-950 outline-none focus:border-sky-600"
-                      value={form.scheduledDate}
-                      onChange={(event) =>
-                        setForm((state) => ({
-                          ...state,
-                          scheduledDate: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-              )}
-
-              {!form.homeDelivery && (
-                <div className="space-y-4 pt-4 border-t border-slate-100">
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                    Información de recepción física
-                  </h3>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <input
-                      className="rounded-xl border px-3 py-3 text-sm bg-slate-50 focus:border-sky-600 outline-none uppercase font-bold"
-                      placeholder="Nombre de quien recibe"
-                      value={form.signerName}
-                      onChange={(event) =>
-                        setForm((state) => ({
-                          ...state,
-                          signerName: event.target.value.replace(
-                            /[^a-zA-ZáéíóúÁÉÍÓÚñÑ\s]/g,
-                            '',
-                          ),
-                        }))
-                      }
-                    />
-
-                    <input
-                      inputMode="numeric"
-                      className="rounded-xl border px-3 py-3 text-sm bg-slate-50 focus:border-sky-600 outline-none"
-                      placeholder="N° de cédula"
-                      value={form.signerId}
-                      onChange={(event) =>
-                        setForm((state) => ({
-                          ...state,
-                          signerId: event.target.value.replace(/\D/g, ''),
-                        }))
-                      }
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <select
-                      className="rounded-xl border px-3 py-3 text-sm bg-slate-50 focus:border-sky-600 outline-none"
-                      value={form.relation}
-                      onChange={(event) =>
-                        setForm((state) => ({
-                          ...state,
-                          relation: event.target.value as Relation,
-                        }))
-                      }
-                    >
-                      {RELATIONS.map((relation) => (
-                        <option key={relation} value={relation}>
-                          {relation}
-                        </option>
-                      ))}
-                    </select>
-
-                    <input
-                      inputMode="numeric"
-                      className="rounded-xl border px-3 py-3 text-sm bg-slate-50 focus:border-sky-600 outline-none"
-                      placeholder="Teléfono"
-                      value={form.phone}
-                      onChange={(event) =>
-                        setForm((state) => ({
-                          ...state,
-                          phone: event.target.value.replace(/\D/g, ''),
-                        }))
-                      }
-                    />
-                  </div>
-
-                  <input
-                    type="email"
-                    className="w-full rounded-xl border px-3 py-3 text-sm bg-slate-50 focus:border-sky-600 outline-none"
-                    placeholder="Correo electrónico"
-                    value={form.email}
-                    onChange={(event) =>
-                      setForm((state) => ({
-                        ...state,
-                        email: event.target.value,
-                      }))
-                    }
-                  />
-
-                  <textarea
-                    className="w-full rounded-xl border px-3 py-3 text-sm bg-slate-50 focus:border-sky-600 outline-none"
-                    placeholder="Observaciones adicionales…"
-                    value={form.notes}
-                    onChange={(event) =>
-                      setForm((state) => ({
-                        ...state,
-                        notes: event.target.value,
-                      }))
-                    }
-                    rows={2}
-                  />
-
-                  <div className="grid gap-1.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">
-                      Documento soporte adicional
-                    </label>
-
-                    <input
-                      key={fileKey}
-                      type="file"
-                      onChange={(event) =>
-                        setAttachment(event.target.files?.[0] || null)
-                      }
-                      className="rounded-xl border px-3 py-2 text-xs bg-white file:mr-3 file:rounded-lg file:border-0 file:bg-slate-200 file:px-3 file:py-1.5 file:text-xs file:font-bold hover:file:bg-slate-300 cursor-pointer"
-                      accept=".pdf,image/jpeg,image/png,image/webp"
-                    />
-                  </div>
-
-                  <div className="grid gap-1.5 pt-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex justify-between">
-                      Firma de conformidad
-
-                      {form.signatureData && (
-                        <button
-                          type="button"
-                          onClick={() =>
+                      <Field label="Usuario / custodio" required>
+                        <UserPicker
+                          people={visiblePeople}
+                          value={form.personId}
+                          onChange={(id) =>
                             setForm((state) => ({
                               ...state,
-                              signatureData: null,
+                              personId: id,
+                              assetIds: [],
                             }))
                           }
-                          className="text-rose-500 underline"
-                        >
-                          Borrar
-                        </button>
-                      )}
-                    </label>
+                          placeholder={
+                            form.type === 'ENTREGA'
+                              ? 'Seleccione usuario que recibirá'
+                              : 'Seleccione usuario para recoger equipos'
+                          }
+                        />
+                      </Field>
+                    </div>
 
-                    <div className="border-2 border-dashed border-slate-300 rounded-xl overflow-hidden bg-white shadow-inner">
-                      <SignaturePad
-                        value={form.signatureData}
-                        onChange={(value) =>
+                    <Field label="Motivo" required>
+                      <select
+                        className={selectClassName}
+                        value={form.reason}
+                        onChange={(event) =>
                           setForm((state) => ({
                             ...state,
-                            signatureData: value,
+                            reason: event.target.value,
                           }))
                         }
-                      />
+                      >
+                        <option value="">Seleccione motivo…</option>
+
+                        {reasonOptions.map((reason) => (
+                          <option key={reason} value={reason}>
+                            {reason}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+
+                    <div
+                      className={[
+                        'rounded-2xl border p-4 transition',
+                        form.homeDelivery
+                          ? 'border-[#3C9CD1]/30 bg-[#3C9CD1]/10'
+                          : 'border-slate-200 bg-slate-50',
+                      ].join(' ')}
+                    >
+                      <label
+                        htmlFor="homeDelivery"
+                        className="flex cursor-pointer items-start gap-3"
+                      >
+                        <input
+                          id="homeDelivery"
+                          type="checkbox"
+                          className="mt-0.5 h-5 w-5 rounded border-slate-300 accent-[#1B3859]"
+                          checked={form.homeDelivery}
+                          onChange={(event) =>
+                            setForm((state) => ({
+                              ...state,
+                              homeDelivery: event.target.checked,
+                            }))
+                          }
+                        />
+
+                        <span>
+                          <span className="block text-sm font-semibold text-[#1B3859]">
+                            Gestionar a través de ruta / transporte
+                          </span>
+
+                          <span className="mt-1 block text-xs leading-5 text-slate-500">
+                            El inventario y la firma del paciente se procesarán
+                            cuando el conductor finalice la ruta en terreno.
+                          </span>
+                        </span>
+                      </label>
                     </div>
-                  </div>
-                </div>
-              )}
-            </div>
 
-            <div className="border rounded-2xl bg-white dark:bg-slate-900 p-6 shadow-sm flex flex-col">
-              <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b pb-2 mb-4">
-                2. Selección de equipos
-              </h2>
+                    {form.homeDelivery && (
+                      <div className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-4 md:grid-cols-2">
+                        <Field label="Conductor" required>
+                          <DriverPicker
+                            drivers={driversQ.data ?? []}
+                            value={form.driverId}
+                            onChange={(id) =>
+                              setForm((state) => ({
+                                ...state,
+                                driverId: id,
+                              }))
+                            }
+                          />
+                        </Field>
 
-              <div className="flex flex-col sm:flex-row gap-2 mb-4">
-                <input
-                  value={assetQ}
-                  onChange={(event) => setAssetQ(event.target.value)}
-                  placeholder="Buscar por nombre, tag o categoría…"
-                  className="flex-1 rounded-xl border px-4 py-2 text-sm bg-slate-50 outline-none focus:border-sky-600"
-                />
+                        <Field label="Fecha programada" required>
+                          <input
+                            required
+                            type="date"
+                            className={inputClassName}
+                            value={form.scheduledDate}
+                            onChange={(event) =>
+                              setForm((state) => ({
+                                ...state,
+                                scheduledDate: event.target.value,
+                              }))
+                            }
+                          />
+                        </Field>
+                      </div>
+                    )}
 
-                <label className="flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-xl text-xs font-bold text-slate-600 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded"
-                    checked={showOnlySelected}
-                    onChange={(event) => setShowOnlySelected(event.target.checked)}
-                    disabled={form.assetIds.length === 0}
-                  />
-                  <span>Filtrar elegidos</span>
-                </label>
-              </div>
+                    {!form.homeDelivery && (
+                      <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                        <div>
+                          <h3 className="text-sm font-semibold text-[#1B3859]">
+                            Información de recepción física
+                          </h3>
 
-              <div className="mb-3 flex items-center justify-between gap-2 text-xs text-slate-500">
-                <span>
-                  Seleccionados:{' '}
-                  <strong className="text-slate-800">{form.assetIds.length}</strong>
-                </span>
+                          <p className="mt-1 text-xs leading-5 text-slate-500">
+                            Datos de la persona que recibe o entrega físicamente
+                            el equipo.
+                          </p>
+                        </div>
 
-                <div className="flex items-center gap-2">
-                  <span>Mostrar</span>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          <Field label="Nombre de quien firma" required>
+                            <input
+                              required
+                              className={inputClassName}
+                              placeholder="Nombre de quien recibe"
+                              value={form.signerName}
+                              onChange={(event) =>
+                                setForm((state) => ({
+                                  ...state,
+                                  signerName: event.target.value.replace(
+                                    /[^a-zA-ZáéíóúÁÉÍÓÚñÑ\s]/g,
+                                    '',
+                                  ),
+                                }))
+                              }
+                            />
+                          </Field>
 
-                  <select
-                    className="rounded-lg border px-2 py-1 text-xs bg-white"
-                    value={pageSize === 'ALL' ? 'ALL' : String(pageSize)}
-                    onChange={(event) => {
-                      const value = event.target.value;
+                          <Field label="Identificación" required>
+                            <input
+                              required
+                              inputMode="numeric"
+                              className={inputClassName}
+                              placeholder="N° de cédula"
+                              value={form.signerId}
+                              onChange={(event) =>
+                                setForm((state) => ({
+                                  ...state,
+                                  signerId: event.target.value.replace(/\D/g, ''),
+                                }))
+                              }
+                            />
+                          </Field>
+                        </div>
 
-                      setPageSize(
-                        value === 'ALL'
-                          ? 'ALL'
-                          : (Number(value) as PageSizeOption),
-                      );
-                    }}
-                  >
-                    <option value="10">10</option>
-                    <option value="50">50</option>
-                    <option value="100">100</option>
-                    <option value="ALL">Todos</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto border rounded-xl shadow-inner bg-slate-50/50 min-h-[300px]">
-                {(availableAssetsQ.isLoading || assignedAssetsQ.isLoading) && (
-                  <div className="p-8 text-center text-sm text-slate-400 font-medium">
-                    Cargando equipos…
-                  </div>
-                )}
-
-                {!availableAssetsQ.isLoading &&
-                  !assignedAssetsQ.isLoading &&
-                  paginatedAssets.length === 0 && (
-                    <div className="p-8 text-center text-sm text-slate-400 font-medium">
-                      No se encontraron equipos disponibles.
-                    </div>
-                  )}
-
-                {paginatedAssets.length > 0 && (
-                  <ul className="divide-y divide-slate-100">
-                    {paginatedAssets.map((asset) => {
-                      const checked = form.assetIds.includes(asset.id);
-                      const status = String(asset.status || '').toUpperCase();
-
-                      return (
-                        <li
-                          key={asset.id}
-                          onClick={() => toggleAsset(asset.id)}
-                          className={`p-4 flex items-center justify-between cursor-pointer transition-colors hover:bg-white ${
-                            checked ? 'bg-sky-50/50' : ''
-                          }`}
-                        >
-                          <div>
-                            <div
-                              className={`font-bold text-sm ${
-                                checked ? 'text-sky-900' : 'text-slate-700'
-                              }`}
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          <Field label="Relación / parentesco" required>
+                            <select
+                              required
+                              className={selectClassName}
+                              value={form.relation}
+                              onChange={(event) =>
+                                setForm((state) => ({
+                                  ...state,
+                                  relation: event.target.value as Relation,
+                                }))
+                              }
                             >
-                              {asset.tag}
-                              <span className="text-[10px] uppercase ml-1 font-medium text-slate-500">
-                                • {asset.name}
+                              {RELATIONS.map((relation) => (
+                                <option key={relation} value={relation}>
+                                  {relation}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+
+                          <Field label="Teléfono" required>
+                            <input
+                              required
+                              inputMode="numeric"
+                              className={inputClassName}
+                              placeholder="Teléfono"
+                              value={form.phone}
+                              onChange={(event) =>
+                                setForm((state) => ({
+                                  ...state,
+                                  phone: event.target.value.replace(/\D/g, ''),
+                                }))
+                              }
+                            />
+                          </Field>
+                        </div>
+
+                        <Field label="Correo electrónico" required>
+                          <input
+                            required
+                            type="email"
+                            className={inputClassName}
+                            placeholder="Correo electrónico"
+                            value={form.email}
+                            onChange={(event) =>
+                              setForm((state) => ({
+                                ...state,
+                                email: event.target.value,
+                              }))
+                            }
+                          />
+                        </Field>
+
+                        <Field label="Observaciones adicionales">
+                          <textarea
+                            className={textAreaClassName}
+                            placeholder="Observaciones adicionales…"
+                            value={form.notes}
+                            onChange={(event) =>
+                              setForm((state) => ({
+                                ...state,
+                                notes: event.target.value,
+                              }))
+                            }
+                            rows={2}
+                          />
+                        </Field>
+
+                        <Field label="Documento soporte adicional">
+                          <input
+                            key={fileKey}
+                            type="file"
+                            onChange={(event) =>
+                              setAttachment(event.target.files?.[0] || null)
+                            }
+                            className="block w-full cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-600 hover:file:bg-slate-200"
+                            accept=".pdf,image/jpeg,image/png,image/webp"
+                          />
+                        </Field>
+
+                        <div className="grid gap-1.5 pt-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                              Firma de conformidad
+                              <span className="ml-1 text-red-500">*</span>
+                            </label>
+
+                            {form.signatureData && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setForm((state) => ({
+                                    ...state,
+                                    signatureData: null,
+                                  }))
+                                }
+                                className="text-xs font-semibold text-red-600 transition hover:text-red-700"
+                              >
+                                Borrar firma
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="overflow-hidden rounded-2xl border-2 border-dashed border-slate-300 bg-white shadow-inner">
+                            <SignaturePad
+                              value={form.signatureData}
+                              onChange={(value) =>
+                                setForm((state) => ({
+                                  ...state,
+                                  signatureData: value,
+                                }))
+                              }
+                              height={220}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-5 flex items-start justify-between gap-3 border-b border-slate-200 pb-4">
+                    <div>
+                      <h2 className="text-sm font-semibold text-[#1B3859]">
+                        Selección de equipos
+                        <span className="ml-1 text-red-500">*</span>
+                      </h2>
+
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        Busca y selecciona los equipos que harán parte de la
+                        entrega o recogida.
+                      </p>
+                    </div>
+
+                    <span className="inline-flex h-8 items-center rounded-full bg-slate-100 px-3 text-xs font-semibold text-slate-600">
+                      {form.assetIds.length} seleccionado
+                      {form.assetIds.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
+                    <div className="grid grid-cols-1 gap-2 2xl:grid-cols-[minmax(0,1fr)_auto_auto] 2xl:items-center">
+                      <input
+                        value={assetQ}
+                        onChange={(event) => setAssetQ(event.target.value)}
+                        placeholder="Buscar por nombre, código/tag o categoría…"
+                        className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10"
+                      />
+
+                      <label
+                        className={[
+                          'inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-2xl border px-4 text-sm font-medium transition',
+                          showOnlySelected
+                            ? 'border-[#3C9CD1]/30 bg-[#3C9CD1]/10 text-[#1B3859]'
+                            : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                          form.assetIds.length === 0
+                            ? 'cursor-not-allowed opacity-60'
+                            : '',
+                        ].join(' ')}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-slate-300 accent-[#1B3859]"
+                          checked={showOnlySelected}
+                          onChange={(event) =>
+                            setShowOnlySelected(event.target.checked)
+                          }
+                          disabled={form.assetIds.length === 0}
+                        />
+
+                        <span>Ver seleccionados</span>
+                      </label>
+
+                      <div className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs text-slate-500 shadow-sm">
+                        <span>Mostrar</span>
+
+                        <select
+                          className="h-8 rounded-xl border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 outline-none focus:border-[#3C9CD1] focus:ring-2 focus:ring-[#3C9CD1]/10"
+                          value={pageSize === 'ALL' ? 'ALL' : String(pageSize)}
+                          onChange={(event) => {
+                            const value = event.target.value;
+
+                            setPageSize(
+                              value === 'ALL'
+                                ? 'ALL'
+                                : (Number(value) as PageSizeOption),
+                            );
+                          }}
+                        >
+                          <option value="10">10</option>
+                          <option value="50">50</option>
+                          <option value="100">100</option>
+                          <option value="ALL">Todos</option>
+                        </select>
+
+                        <span>por página</span>
+                      </div>
+                    </div>
+
+                    {form.assetIds.length > 0 && (
+                      <div className="rounded-2xl border border-[#54BF5B]/30 bg-[#54BF5B]/10 px-3 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-semibold text-[#1B3859]">
+                            Equipos seleccionados: {form.assetIds.length}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setForm((state) => ({
+                                ...state,
+                                assetIds: [],
+                              }))
+                            }
+                            className="ml-auto rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                          >
+                            Limpiar selección
+                          </button>
+                        </div>
+
+                        {selectedAssets.length > 0 && (
+                          <div className="mt-3 flex max-h-32 flex-wrap gap-2 overflow-y-auto">
+                            {selectedAssets.map((asset) => (
+                              <button
+                                key={asset.id}
+                                type="button"
+                                onClick={() => toggleAsset(asset.id)}
+                                className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                              >
+                                <span className="truncate">
+                                  <b className="text-[#1B3859]">{asset.tag}</b>{' '}
+                                  — {asset.name}
+                                </span>
+                                <span className="text-slate-400">×</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="min-h-[360px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/70">
+                      {(availableAssetsQ.isLoading ||
+                        assignedAssetsQ.isLoading) && (
+                        <div className="flex min-h-[320px] items-center justify-center text-sm text-slate-500">
+                          Cargando equipos…
+                        </div>
+                      )}
+
+                      {!availableAssetsQ.isLoading &&
+                        !assignedAssetsQ.isLoading &&
+                        paginatedAssets.length === 0 && (
+                          <div className="flex min-h-[320px] flex-col items-center justify-center px-4 text-center">
+                            <p className="text-sm font-semibold text-slate-700">
+                              No se encontraron equipos
+                            </p>
+
+                            <p className="mt-1 max-w-sm text-xs leading-5 text-slate-500">
+                              Ajusta la búsqueda, cambia el usuario/custodio o
+                              revisa si el movimiento corresponde a entrega o
+                              recogida.
+                            </p>
+                          </div>
+                        )}
+
+                      {paginatedAssets.length > 0 && (
+                        <ul className="divide-y divide-slate-100">
+                          {paginatedAssets.map((asset) => {
+                            const checked = form.assetIds.includes(asset.id);
+
+                            return (
+                              <li key={asset.id}>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleAsset(asset.id)}
+                                  className={[
+                                    'flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition',
+                                    checked
+                                      ? 'bg-[#54BF5B]/10 hover:bg-[#54BF5B]/15'
+                                      : 'bg-white hover:bg-slate-50',
+                                  ].join(' ')}
+                                >
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span
+                                        className="truncate text-sm font-bold text-[#111827]"
+                                        title={asset.tag}
+                                      >
+                                        {asset.tag}
+                                      </span>
+
+                                      {asset.category?.name && (
+                                        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                                          {asset.category.name}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <p
+                                      className="mt-1 truncate text-sm font-medium text-slate-700"
+                                      title={asset.name}
+                                    >
+                                      {asset.name}
+                                    </p>
+
+                                    {asset.currentCustodian?.fullName && (
+                                      <p className="mt-1 truncate text-xs text-slate-500">
+                                        Custodio actual:{' '}
+                                        <b className="font-semibold text-slate-700">
+                                          {asset.currentCustodian.fullName}
+                                        </b>
+                                      </p>
+                                    )}
+                                  </div>
+
+                                  <span
+                                    className={[
+                                      'grid h-7 w-7 shrink-0 place-items-center rounded-full border text-xs font-bold',
+                                      checked
+                                        ? 'border-[#54BF5B] bg-[#54BF5B] text-white'
+                                        : 'border-slate-300 bg-white text-slate-400',
+                                    ].join(' ')}
+                                  >
+                                    {checked ? '✓' : '+'}
+                                  </span>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+                      <span>
+                        {visibleAssets.length === 0
+                          ? 'Sin equipos para mostrar.'
+                          : pageSize === 'ALL'
+                            ? `Mostrando ${visibleAssets.length} equipo${
+                                visibleAssets.length === 1 ? '' : 's'
+                              }`
+                            : `Página ${page} de ${totalPages} · ${
+                                visibleAssets.length
+                              } resultado${
+                                visibleAssets.length === 1 ? '' : 's'
+                              }`}
+                      </span>
+
+                      {pageSize !== 'ALL' && totalPages > 1 && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPage((current) => Math.max(1, current - 1))
+                            }
+                            disabled={page <= 1}
+                            className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Anterior
+                          </button>
+
+                          <span className="rounded-xl bg-white px-3 py-2 text-xs font-medium text-slate-600 ring-1 ring-slate-200">
+                            {page} / {totalPages}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPage((current) =>
+                                Math.min(totalPages, current + 1),
+                              )
+                            }
+                            disabled={page >= totalPages}
+                            className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Siguiente
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={create.isPending}
+                      className="mt-3 inline-flex h-12 w-full items-center justify-center rounded-xl bg-[#1B3859] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#132B45] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {create.isPending
+                        ? 'Procesando…'
+                        : 'Confirmar registro'}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+
+            {activeTab === 'HISTORY' && (
+              <div className="space-y-5">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                    <div>
+                      <h2 className="text-sm font-semibold text-[#1B3859]">
+                        Historial de trámites
+                      </h2>
+
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        Consulta entregas y recogidas registradas en el sistema.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2">
+                        <p className="font-semibold text-slate-500">Total</p>
+                        <p className="mt-1 text-base font-bold text-[#111827]">
+                          {historyTotal}
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl border border-[#3C9CD1]/30 bg-[#3C9CD1]/10 px-4 py-2">
+                        <p className="font-semibold text-[#1B3859]">
+                          Entregas
+                        </p>
+                        <p className="mt-1 text-base font-bold text-[#1B3859]">
+                          {historyEntregaTotal}
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl border border-[#54BF5B]/30 bg-[#54BF5B]/10 px-4 py-2">
+                        <p className="font-semibold text-[#16803A]">
+                          Recogidas
+                        </p>
+                        <p className="mt-1 text-base font-bold text-[#16803A]">
+                          {historyRecogidaTotal}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto] xl:items-center">
+                    <input
+                      value={historyQ}
+                      onChange={(event) => setHistoryQ(event.target.value)}
+                      placeholder="Buscar por usuario, documento, motivo, código o equipo…"
+                      className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10"
+                    />
+
+                    <select
+                      value={historyType}
+                      onChange={(event) =>
+                        setHistoryType(event.target.value as 'ALL' | HandoverType)
+                      }
+                      className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm outline-none transition focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10"
+                    >
+                      <option value="ALL">Todos los tipos</option>
+                      <option value="ENTREGA">Solo entregas</option>
+                      <option value="RECOGIDA">Solo recogidas</option>
+                    </select>
+
+                    <div className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs text-slate-500 shadow-sm">
+                      <span>Mostrar</span>
+
+                      <select
+                        className="h-8 rounded-xl border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 outline-none focus:border-[#3C9CD1] focus:ring-2 focus:ring-[#3C9CD1]/10"
+                        value={
+                          historyPageSize === 'ALL'
+                            ? 'ALL'
+                            : String(historyPageSize)
+                        }
+                        onChange={(event) => {
+                          const value = event.target.value;
+
+                          setHistoryPageSize(
+                            value === 'ALL'
+                              ? 'ALL'
+                              : (Number(value) as HistoryPageSizeOption),
+                          );
+                        }}
+                      >
+                        <option value="6">6</option>
+                        <option value="12">12</option>
+                        <option value="24">24</option>
+                        <option value="ALL">Todos</option>
+                      </select>
+
+                      <span>por página</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHistoryQ('');
+                        setHistoryType('ALL');
+                        setHistoryPage(1);
+                      }}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-[#1B3859] shadow-sm transition hover:bg-slate-50"
+                    >
+                      Limpiar
+                    </button>
+                  </div>
+                </div>
+
+                {handoversQ.isLoading ? (
+                  <div className="flex min-h-40 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+                    Cargando historial…
+                  </div>
+                ) : handovers.length === 0 ? (
+                  <div className="flex min-h-40 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-sm text-slate-500">
+                    No hay trámites registrados aún.
+                  </div>
+                ) : filteredHandovers.length === 0 ? (
+                  <div className="flex min-h-40 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center">
+                    <p className="text-sm font-semibold text-slate-700">
+                      Sin resultados para los filtros actuales
+                    </p>
+
+                    <p className="mt-1 text-xs text-slate-500">
+                      Ajusta la búsqueda o cambia el tipo de trámite.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {paginatedHandovers.map((handover) => {
+                        const isDelivery = handover.type === 'ENTREGA';
+                        const itemsCount = handover.items?.length || 0;
+                        const firstAssets = (handover.items || []).slice(0, 3);
+                        const remainingAssets = Math.max(
+                          0,
+                          itemsCount - firstAssets.length,
+                        );
+
+                        return (
+                          <article
+                            key={handover.id}
+                            className="flex min-h-[245px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-[#3C9CD1]/40 hover:shadow-md"
+                          >
+                            <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+                              <span
+                                className={[
+                                  'inline-flex h-7 items-center rounded-full border px-3 text-xs font-semibold',
+                                  isDelivery
+                                    ? 'border-[#3C9CD1]/30 bg-[#3C9CD1]/10 text-[#1B3859]'
+                                    : 'border-[#54BF5B]/30 bg-[#54BF5B]/10 text-[#16803A]',
+                                ].join(' ')}
+                              >
+                                {isDelivery ? 'Entrega' : 'Recogida'}
+                              </span>
+
+                              <span className="text-right text-xs font-medium text-slate-500">
+                                {formatDateTime(handover.createdAt)}
                               </span>
                             </div>
 
-                            <div className="text-[10px] font-black tracking-widest mt-1 text-slate-400 uppercase">
-                              {status.replace('_', ' ') || '—'}
+                            <div className="flex flex-1 flex-col gap-4 p-4">
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                  Usuario / custodio
+                                </p>
+
+                                <p
+                                  className="mt-1 truncate text-sm font-semibold text-[#111827]"
+                                  title={handover.person?.fullName || ''}
+                                >
+                                  {handover.person?.fullName || 'Sin custodio'}
+                                </p>
+
+                                {handover.person?.documentId && (
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    Documento: {handover.person.documentId}
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="grid gap-3 text-xs text-slate-600 sm:grid-cols-2">
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                  <p className="font-semibold text-slate-500">
+                                    Motivo
+                                  </p>
+                                  <p className="mt-1 max-h-10 overflow-hidden font-medium text-slate-700">
+                                    {handover.reason || '—'}
+                                  </p>
+                                </div>
+
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                  <p className="font-semibold text-slate-500">
+                                    Equipos
+                                  </p>
+                                  <p className="mt-1 text-base font-bold text-[#111827]">
+                                    {itemsCount}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {itemsCount > 0 && (
+                                <div className="space-y-1">
+                                  {firstAssets.map((item) => (
+                                    <div
+                                      key={item.id}
+                                      className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                                    >
+                                      <span
+                                        className="truncate font-semibold text-[#1B3859]"
+                                        title={item.asset?.tag || ''}
+                                      >
+                                        {item.asset?.tag || '—'}
+                                      </span>
+
+                                      <span
+                                        className="truncate text-slate-500"
+                                        title={item.asset?.name || ''}
+                                      >
+                                        {item.asset?.name || 'Sin nombre'}
+                                      </span>
+                                    </div>
+                                  ))}
+
+                                  {remainingAssets > 0 && (
+                                    <p className="pt-1 text-xs font-medium text-slate-500">
+                                      +{remainingAssets} equipo
+                                      {remainingAssets === 1 ? '' : 's'} más
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+
+                              <button
+  type="button"
+  onClick={() => setSelectedHandover(handover)}
+  className="mt-auto inline-flex h-10 w-full items-center justify-center rounded-xl bg-[#1B3859] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#132B45]"
+>
+  Ver detalle
+</button>
                             </div>
-                          </div>
+                          </article>
+                        );
+                      })}
+                    </div>
 
-                          <div
-                            className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-all ${
-                              checked
-                                ? 'bg-sky-600 border-sky-600 text-white'
-                                : 'bg-white border-slate-300'
-                            }`}
-                          >
-                            {checked && '✓'}
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                    {filteredHandovers.length > 0 && (
+                      <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                        <span>
+                          {historyPageSize === 'ALL'
+                            ? `Mostrando ${filteredHandovers.length} trámite${
+                                filteredHandovers.length === 1 ? '' : 's'
+                              }`
+                            : `Mostrando ${historyStart}-${historyEnd} de ${
+                                filteredHandovers.length
+                              } trámite${
+                                filteredHandovers.length === 1 ? '' : 's'
+                              }`}
+                        </span>
+
+                        {historyPageSize !== 'ALL' &&
+                          historyTotalPages > 1 && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setHistoryPage((current) =>
+                                    Math.max(1, current - 1),
+                                  )
+                                }
+                                disabled={historyPage <= 1}
+                                className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Anterior
+                              </button>
+
+                              <span className="rounded-xl bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 ring-1 ring-slate-200">
+                                Página {historyPage} de {historyTotalPages}
+                              </span>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setHistoryPage((current) =>
+                                    Math.min(historyTotalPages, current + 1),
+                                  )
+                                }
+                                disabled={historyPage >= historyTotalPages}
+                                className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Siguiente
+                              </button>
+                            </div>
+                          )}
+                      </div>
+                    )}
+                  </>
                 )}
-              </div>
-
-              {pageSize !== 'ALL' && totalPages > 1 && (
-                <div className="mt-3 flex justify-end items-center gap-2 text-xs text-slate-500">
-                  <button
-                    type="button"
-                    className="rounded-lg border px-3 py-1 disabled:opacity-40"
-                    disabled={page <= 1}
-                    onClick={() => setPage((value) => Math.max(1, value - 1))}
-                  >
-                    Anterior
-                  </button>
-
-                  <span>
-                    Página {page} de {totalPages}
-                  </span>
-
-                  <button
-                    type="button"
-                    className="rounded-lg border px-3 py-1 disabled:opacity-40"
-                    disabled={page >= totalPages}
-                    onClick={() =>
-                      setPage((value) => Math.min(totalPages, value + 1))
-                    }
-                  >
-                    Siguiente
-                  </button>
-                </div>
-              )}
-
-              <div className="mt-6">
-                <button
-                  type="submit"
-                  disabled={create.isPending}
-                  className="w-full rounded-xl bg-slate-900 text-white py-4 text-sm font-black uppercase tracking-[0.2em] shadow-xl hover:bg-black transition-all active:scale-95 disabled:opacity-50"
-                >
-                  {create.isPending ? 'Procesando…' : 'Confirmar registro'}
-                </button>
-              </div>
-            </div>
-          </form>
-        )}
-
-        {activeTab === 'HISTORY' && (
-          <div className="animate-in fade-in duration-300">
-            {handoversQ.isLoading ? (
-              <div className="p-10 text-center font-bold text-slate-400 uppercase tracking-widest animate-pulse">
-                Cargando historial…
-              </div>
-            ) : (handoversQ.data || []).length === 0 ? (
-              <div className="p-10 text-center text-slate-500 border rounded-xl bg-slate-50">
-                No hay trámites registrados aún.
-              </div>
-            ) : (
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {(handoversQ.data || []).map((handover) => (
-                  <div
-                    key={handover.id}
-                    className="border border-slate-200 rounded-2xl p-5 bg-white shadow-sm flex flex-col gap-3 transition-shadow hover:shadow-md"
-                  >
-                    <div className="flex justify-between items-center border-b pb-3">
-                      <span
-                        className={`text-[9px] font-black uppercase px-2 py-1 rounded tracking-widest border ${
-                          handover.type === 'ENTREGA'
-                            ? 'bg-sky-50 text-sky-700 border-sky-200'
-                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                        }`}
-                      >
-                        {handover.type}
-                      </span>
-
-                      <span className="text-[10px] font-bold text-slate-400">
-                        {new Date(handover.createdAt).toLocaleDateString('es-CO')}
-                      </span>
-                    </div>
-
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                        Usuario / paciente
-                      </p>
-
-                      <p
-                        className="font-bold text-sm text-slate-800 uppercase truncate"
-                        title={handover.person?.fullName || ''}
-                      >
-                        {handover.person?.fullName || '—'}
-                      </p>
-
-                      {handover.reason && (
-                        <p className="mt-1 text-[10px] text-slate-500 font-bold uppercase">
-                          {handover.reason}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="flex justify-between items-end mt-2">
-                      <p className="text-[10px] font-bold text-slate-500 uppercase">
-                        {handover.items?.length || 0} equipos
-                      </p>
-
-                      <button
-                        onClick={() => setSelectedHandover(handover)}
-                        className="text-[10px] font-black text-sky-600 bg-sky-50 px-3 py-1.5 rounded-lg hover:bg-sky-100 uppercase tracking-widest border border-sky-100 transition-colors"
-                      >
-                        Ver detalles
-                      </button>
-                    </div>
-                  </div>
-                ))}
               </div>
             )}
           </div>
-        )}
+        </SectionCard>
 
         {selectedHandover && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
-            <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[95vh] flex flex-col shadow-2xl overflow-hidden">
-              <div className="p-4 sm:p-5 border-b flex justify-between items-center bg-slate-50">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-3 py-6 backdrop-blur-sm">
+            <div className="flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
                 <div>
-                  <h2 className="text-base sm:text-lg font-black text-slate-800 uppercase tracking-tight">
-                    Detalle de gestión
+                  <h2 className="text-lg font-semibold text-[#1B3859]">
+                    Detalle del trámite
                   </h2>
 
-                  <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 tracking-widest uppercase mt-1">
-                    Registrado el:{' '}
-                    {new Date(selectedHandover.createdAt).toLocaleString('es-CO')}
+                  <p className="mt-1 text-sm text-slate-500">
+                    {selectedHandover.type} ·{' '}
+                    {formatDateTime(selectedHandover.createdAt)}
                   </p>
                 </div>
 
                 <button
+                  type="button"
                   onClick={() => setSelectedHandover(null)}
-                  className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300 font-bold"
+                  className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 text-slate-500 transition hover:bg-slate-50"
+                  aria-label="Cerrar"
                 >
-                  ✕
+                  ×
                 </button>
               </div>
 
-              <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4 sm:space-y-6">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
-                      Tipo de movimiento
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      Custodio / usuario
                     </p>
-
-                    <p
-                      className={`text-sm font-black uppercase ${
-                        selectedHandover.type === 'ENTREGA'
-                          ? 'text-sky-700'
-                          : 'text-emerald-700'
-                      }`}
-                    >
-                      {selectedHandover.type}
-                    </p>
-                  </div>
-
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
-                      Autor de gestión
-                    </p>
-
-                    <p className="text-sm font-bold text-slate-700 uppercase truncate">
-                      {selectedHandover.createdBy?.name || 'Sistema'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="border border-slate-200 rounded-xl p-4 sm:p-5 space-y-3 shadow-sm">
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-2">
-                    Información del usuario
-                  </h3>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                    <p className="font-bold text-slate-800 uppercase sm:col-span-2">
+                    <p className="mt-1 text-sm font-semibold text-[#111827]">
                       {selectedHandover.person?.fullName || '—'}
                     </p>
+                    {selectedHandover.person?.documentId && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        Documento: {selectedHandover.person.documentId}
+                      </p>
+                    )}
+                  </div>
 
-                    <p className="text-slate-600 font-medium text-xs">
-                      Doc: {selectedHandover.person?.documentId || '—'}
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      Motivo
                     </p>
+                    <p className="mt-1 text-sm font-semibold text-[#111827]">
+                      {selectedHandover.reason || '—'}
+                    </p>
+                  </div>
 
-                    <p
-                      className="text-slate-600 font-medium text-xs truncate"
-                      title={selectedHandover.person?.email || ''}
-                    >
-                      Email: {selectedHandover.person?.email || '—'}
+                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      Firmante
                     </p>
+                    <p className="mt-1 text-sm text-slate-700">
+                      {selectedHandover.signerName || '—'}
+                    </p>
+                    {selectedHandover.signerId && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        ID: {selectedHandover.signerId}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      Contacto
+                    </p>
+                    <p className="mt-1 text-sm text-slate-700">
+                      {selectedHandover.email || '—'}
+                    </p>
+                    {selectedHandover.phone && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        Tel: {selectedHandover.phone}
+                      </p>
+                    )}
                   </div>
                 </div>
 
-                <div className="border border-slate-200 rounded-xl p-4 sm:p-5 space-y-3 shadow-sm">
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-2">
-                    Inventario procesado
-                  </h3>
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-sm font-semibold text-[#1B3859]">
+                    Equipos incluidos
+                  </p>
 
-                  <ul className="divide-y">
-                    {(selectedHandover.items || []).map((item) => (
-                      <li
-                        key={item.id}
-                        className="py-2 flex justify-between items-center gap-2"
-                      >
-                        <span className="font-bold text-sm text-slate-700 uppercase leading-tight">
-                          {item.asset?.tag}
-                          <span className="font-medium text-slate-400 text-[10px] block sm:inline sm:ml-1">
-                            • {item.asset?.name}
-                          </span>
-                        </span>
-
-                        <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded whitespace-nowrap">
-                          Cant: {item.quantity}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4">
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-2">
-                    Validación y firma
-                  </h3>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                        Receptor físico
-                      </p>
-
-                      <p className="font-bold text-slate-800 uppercase">
-                        {selectedHandover.signerName || '—'}
-                      </p>
-
-                      <p className="text-xs text-slate-500 font-medium uppercase mt-0.5">
-                        {selectedHandover.relation || '—'} • Doc:{' '}
-                        {selectedHandover.signerId || '—'}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
-                        Trazo de conformidad
-                      </p>
-
-                      {selectedHandover.signatureData?.startsWith('data:image') ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={selectedHandover.signatureData}
-                          alt="Firma"
-                          className="h-16 border rounded bg-white p-1 object-contain"
-                        />
-                      ) : (
-                        <p className="text-[10px] font-bold italic text-slate-400 uppercase">
-                          {selectedHandover.signatureData || 'No disponible'}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {selectedHandover.notes && (
-                    <div className="mt-3 pt-3 border-t border-slate-200">
-                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
-                        Notas adicionales
-                      </p>
-
-                      <p className="text-xs text-slate-600 italic">
-                        {selectedHandover.notes}
-                      </p>
-                    </div>
+                  {!selectedHandover.items?.length ? (
+                    <p className="mt-3 text-sm text-slate-500">
+                      Sin equipos registrados.
+                    </p>
+                  ) : (
+                    <ul className="mt-3 divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200">
+                      {selectedHandover.items.map((item) => (
+                        <li
+                          key={item.id}
+                          className="bg-slate-50 px-3 py-3 text-sm"
+                        >
+                          <p className="font-semibold text-[#111827]">
+                            {item.asset?.tag || '—'}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {item.asset?.name || 'Sin nombre'}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
                   )}
+                </div>
 
-                  <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <a
-                      href={getSecureUrl(
-                        `/uploads/handovers/Comodato_${selectedHandover.id}.pdf`,
-                      )}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`w-full flex items-center justify-center bg-indigo-50 border-2 border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-all font-black uppercase text-[11px] sm:text-xs tracking-widest py-3 rounded-xl shadow-sm gap-2 ${
-                        !(
-                          selectedHandover.attachmentPath &&
-                          !selectedHandover.attachmentPath.includes('Comodato_')
+                {selectedHandover.notes && (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <p className="text-sm font-semibold text-[#1B3859]">
+                      Observaciones
+                    </p>
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">
+                      {selectedHandover.notes}
+                    </p>
+                  </div>
+                )}
+
+                {selectedHandover.signatureData && (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <p className="text-sm font-semibold text-[#1B3859]">
+                      Firma
+                    </p>
+
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={selectedHandover.signatureData}
+                      alt="Firma"
+                      className="mt-3 max-h-44 rounded-2xl border border-slate-200 bg-white object-contain"
+                    />
+                  </div>
+                )}
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-sm font-semibold text-[#1B3859]">
+                    Comodato / soporte del trámite
+                  </p>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handlePreviewApiFile(
+                          getHandoverComodatoUrl(selectedHandover)!,
+                          `Comodato_${selectedHandover.id}.pdf`,
                         )
-                          ? 'sm:col-span-2'
-                          : ''
-                      }`}
+                      }
+                      className="inline-flex h-10 items-center justify-center rounded-xl bg-[#1B3859] px-4 text-sm font-semibold text-white transition hover:bg-[#132B45]"
                     >
                       Ver comodato
+                    </button>
+
+                    <a
+                      href={toAbsoluteApiUrl(
+                        getHandoverComodatoDownloadUrl(selectedHandover),
+                      )}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-[#1B3859] transition hover:bg-slate-50"
+                    >
+                      Descargar comodato
                     </a>
 
-                    {selectedHandover.attachmentPath &&
-                      !selectedHandover.attachmentPath.includes('Comodato_') && (
-                        <a
-                          href={getSecureUrl(selectedHandover.attachmentPath)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="w-full flex items-center justify-center bg-emerald-50 border-2 border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-all font-black uppercase text-[11px] sm:text-xs tracking-widest py-3 rounded-xl shadow-sm gap-2"
-                        >
-                          Soporte adicional
-                        </a>
-                      )}
+                    {getHandoverAttachmentUrl(selectedHandover) && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handlePreviewApiFile(
+                            getHandoverAttachmentUrl(selectedHandover)!,
+                            selectedHandover.attachmentName || 'Soporte adicional',
+                          )
+                        }
+                        className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-[#1B3859] transition hover:bg-slate-50"
+                      >
+                        Ver soporte adicional
+                      </button>
+                    )}
                   </div>
                 </div>
-              </div>
-
-              <div className="p-4 border-t bg-slate-50 flex justify-end">
-                <button
-                  onClick={() => setSelectedHandover(null)}
-                  className="w-full sm:w-auto px-6 py-3 sm:py-2 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg hover:bg-slate-800 transition-colors"
-                >
-                  Cerrar detalles
-                </button>
               </div>
             </div>
           </div>
         )}
-      </section>
+        {previewFile && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 px-3 py-6 backdrop-blur-sm">
+            <div className="flex max-h-[92dvh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+              <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+                <p className="truncate text-sm font-semibold text-[#1B3859]">
+                  {previewFile.name}
+                </p>
+
+                <button
+                  type="button"
+                  onClick={handleClosePreview}
+                  className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 text-slate-500 transition hover:bg-slate-50"
+                  aria-label="Cerrar vista previa"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-auto bg-slate-100 p-3">
+                {previewFile.isImage ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={previewFile.url}
+                    alt={previewFile.name}
+                    className="mx-auto max-h-[78dvh] rounded-2xl object-contain"
+                  />
+                ) : (
+                  <iframe
+                    src={previewFile.url}
+                    title={previewFile.name}
+                    className="h-[78dvh] w-full rounded-2xl border border-slate-200 bg-white"
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+      </PageShell>
     </Guard>
   );
 }
