@@ -27,6 +27,7 @@ type Filters = {
   status: string;
   lifeState: string;
   acquisitionType: string;
+  invoiceNumber: string;
 };
 
 const EMPTY_FILTERS: Filters = {
@@ -35,6 +36,7 @@ const EMPTY_FILTERS: Filters = {
   status: '',
   lifeState: '',
   acquisitionType: '',
+  invoiceNumber: '',
 };
 
 const STATUS_OPTIONS = [
@@ -113,7 +115,8 @@ function countActiveFilters(filters: Filters, q: string, isTrashMode: boolean) {
   if (filters.siteId) count += 1;
   if (filters.status) count += 1;
   if (filters.lifeState) count += 1;
-  if (filters.acquisitionType) count += 1;
+   if (filters.acquisitionType) count += 1;
+  if (filters.invoiceNumber.trim()) count += 1;
   if (isTrashMode) count += 1;
 
   return count;
@@ -175,12 +178,13 @@ export default function AssetTable() {
     getValidPage(searchParams.get('page')),
   );
 
-  const [filters, setFilters] = useState<Filters>(() => ({
+   const [filters, setFilters] = useState<Filters>(() => ({
     categoryId: searchParams.get('categoryId') ?? '',
     siteId: searchParams.get('siteId') ?? '',
     status: searchParams.get('status') ?? '',
     lifeState: searchParams.get('lifeState') ?? '',
     acquisitionType: searchParams.get('acquisitionType') ?? '',
+    invoiceNumber: searchParams.get('invoiceNumber') ?? '',
   }));
 
   useEffect(() => {
@@ -229,6 +233,10 @@ export default function AssetTable() {
       params.set('acquisitionType', filters.acquisitionType);
     }
 
+    if (filters.invoiceNumber.trim()) {
+      params.set('invoiceNumber', filters.invoiceNumber.trim());
+    }
+
     if (isTrashMode) params.set('trash', '1');
 
     return params;
@@ -268,8 +276,12 @@ export default function AssetTable() {
       if (filters.siteId) params.siteId = filters.siteId;
       if (filters.status) params.status = filters.status;
       if (filters.lifeState) params.lifeState = filters.lifeState;
-      if (filters.acquisitionType) {
+                 if (filters.acquisitionType) {
         params.acquisitionType = filters.acquisitionType;
+      }
+
+      if (filters.invoiceNumber.trim()) {
+        params.invoiceNumber = filters.invoiceNumber.trim();
       }
 
       const res = await api.get<Paginated<Asset>>('/api/assets', {
@@ -492,13 +504,20 @@ export default function AssetTable() {
               />
             )}
 
-            {filters.acquisitionType && (
+                      {filters.acquisitionType && (
               <FilterChip
                 label={`Adquisición: ${optionLabel(
                   ACQ_OPTIONS,
                   filters.acquisitionType,
                 )}`}
                 onRemove={() => updateFilter('acquisitionType', '')}
+              />
+            )}
+
+            {filters.invoiceNumber.trim() && (
+              <FilterChip
+                label={`Factura: ${filters.invoiceNumber.trim()}`}
+                onRemove={() => updateFilter('invoiceNumber', '')}
               />
             )}
 
@@ -527,8 +546,8 @@ export default function AssetTable() {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
-              <select
+<div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
+            <select
                 className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10"
                 value={filters.categoryId}
                 onChange={(event) =>
@@ -595,6 +614,18 @@ export default function AssetTable() {
                   </option>
                 ))}
               </select>
+                            <input
+                type="search"
+                value={filters.invoiceNumber}
+                onChange={(event) =>
+                  updateFilter('invoiceNumber', event.target.value)
+                }
+                placeholder="Factura: número o registro"
+                className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10"
+                aria-label="Filtrar por factura"
+              />
+                            
+              
             </div>
 
             {canManageTrash && (

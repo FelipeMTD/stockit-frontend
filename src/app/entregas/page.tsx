@@ -222,6 +222,17 @@ function canUseHandoverRole(role: AppRole | null) {
   );
 }
 
+function normalizeSignerNameInput(value: string) {
+  return value
+    .replace(/[^a-zA-ZáéíóúÁÉÍÓÚüÜñÑ\s]/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .toUpperCase();
+}
+
+function normalizeSignerNameForSave(value: string) {
+  return normalizeSignerNameInput(value).trim();
+}
+
 function emptyForm(): FormState {
   return {
     type: 'ENTREGA',
@@ -878,7 +889,9 @@ export default function HandoverPage() {
   function buildPayload(state: FormState) {
     const base = {
       type: state.type,
-      signerName: state.homeDelivery ? null : state.signerName.trim() || null,
+      signerName: state.homeDelivery
+        ? null
+        : normalizeSignerNameForSave(state.signerName) || null,
       signerId: state.homeDelivery ? null : state.signerId.trim() || null,
       relation: state.homeDelivery ? null : state.relation,
       email: state.homeDelivery ? null : state.email.trim() || null,
@@ -927,8 +940,7 @@ export default function HandoverPage() {
         !allowedValues.includes(formState.reason as any)
       ) {
         throw new Error(
-          `Selecciona un motivo válido para ${
-            formState.type === 'ENTREGA' ? 'ENTREGA' : 'RECOGIDA'
+          `Selecciona un motivo válido para ${formState.type === 'ENTREGA' ? 'ENTREGA' : 'RECOGIDA'
           }.`,
         );
       }
@@ -1043,9 +1055,9 @@ export default function HandoverPage() {
     onError: (error: any) => {
       toast.error(
         error?.response?.data?.error ||
-          error?.response?.data?.details?.message ||
-          error?.message ||
-          'No se pudo registrar.',
+        error?.response?.data?.details?.message ||
+        error?.message ||
+        'No se pudo registrar.',
       );
     },
   });
@@ -1088,8 +1100,8 @@ export default function HandoverPage() {
 
       toast.error(
         error?.response?.data?.error ||
-          error?.message ||
-          'No se pudo abrir el archivo.',
+        error?.message ||
+        'No se pudo abrir el archivo.',
       );
     }
   };
@@ -1328,10 +1340,7 @@ export default function HandoverPage() {
                               onChange={(event) =>
                                 setForm((state) => ({
                                   ...state,
-                                  signerName: event.target.value.replace(
-                                    /[^a-zA-ZáéíóúÁÉÍÓÚñÑ\s]/g,
-                                    '',
-                                  ),
+                                  signerName: normalizeSignerNameInput(event.target.value),
                                 }))
                               }
                             />
@@ -1600,10 +1609,10 @@ export default function HandoverPage() {
                     <div className="min-h-[360px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/70">
                       {(availableAssetsQ.isLoading ||
                         assignedAssetsQ.isLoading) && (
-                        <div className="flex min-h-[320px] items-center justify-center text-sm text-slate-500">
-                          Cargando equipos…
-                        </div>
-                      )}
+                          <div className="flex min-h-[320px] items-center justify-center text-sm text-slate-500">
+                            Cargando equipos…
+                          </div>
+                        )}
 
                       {!availableAssetsQ.isLoading &&
                         !assignedAssetsQ.isLoading &&
@@ -1694,14 +1703,11 @@ export default function HandoverPage() {
                         {visibleAssets.length === 0
                           ? 'Sin equipos para mostrar.'
                           : pageSize === 'ALL'
-                            ? `Mostrando ${visibleAssets.length} equipo${
-                                visibleAssets.length === 1 ? '' : 's'
-                              }`
-                            : `Página ${page} de ${totalPages} · ${
-                                visibleAssets.length
-                              } resultado${
-                                visibleAssets.length === 1 ? '' : 's'
-                              }`}
+                            ? `Mostrando ${visibleAssets.length} equipo${visibleAssets.length === 1 ? '' : 's'
+                            }`
+                            : `Página ${page} de ${totalPages} · ${visibleAssets.length
+                            } resultado${visibleAssets.length === 1 ? '' : 's'
+                            }`}
                       </span>
 
                       {pageSize !== 'ALL' && totalPages > 1 && (
@@ -1981,12 +1987,12 @@ export default function HandoverPage() {
                               )}
 
                               <button
-  type="button"
-  onClick={() => setSelectedHandover(handover)}
-  className="mt-auto inline-flex h-10 w-full items-center justify-center rounded-xl bg-[#1B3859] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#132B45]"
->
-  Ver detalle
-</button>
+                                type="button"
+                                onClick={() => setSelectedHandover(handover)}
+                                className="mt-auto inline-flex h-10 w-full items-center justify-center rounded-xl bg-[#1B3859] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#132B45]"
+                              >
+                                Ver detalle
+                              </button>
                             </div>
                           </article>
                         );
@@ -1997,14 +2003,11 @@ export default function HandoverPage() {
                       <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500 shadow-sm sm:flex-row sm:items-center sm:justify-between">
                         <span>
                           {historyPageSize === 'ALL'
-                            ? `Mostrando ${filteredHandovers.length} trámite${
-                                filteredHandovers.length === 1 ? '' : 's'
-                              }`
-                            : `Mostrando ${historyStart}-${historyEnd} de ${
-                                filteredHandovers.length
-                              } trámite${
-                                filteredHandovers.length === 1 ? '' : 's'
-                              }`}
+                            ? `Mostrando ${filteredHandovers.length} trámite${filteredHandovers.length === 1 ? '' : 's'
+                            }`
+                            : `Mostrando ${historyStart}-${historyEnd} de ${filteredHandovers.length
+                            } trámite${filteredHandovers.length === 1 ? '' : 's'
+                            }`}
                         </span>
 
                         {historyPageSize !== 'ALL' &&

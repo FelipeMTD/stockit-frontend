@@ -98,6 +98,8 @@ const AREA_OPTIONS = [
   'DIRECCION MEDICA',
   'PHD',
   'SERVICIOS ESPECIALES',
+  'UNIDAD MOVIL',
+
 ] as const;
 
 const EPS_OPTIONS = [

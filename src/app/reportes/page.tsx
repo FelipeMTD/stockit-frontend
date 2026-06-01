@@ -516,6 +516,14 @@ export default function ReportesPage() {
 
     download(url, 'poblacion.csv');
   };
+  const downloadPolicyReport = () => {
+  if (!canExportInventory) {
+    toast.error('No tienes permiso para exportar reportes personalizados.');
+    return;
+  }
+
+  download('/api/reports/custom/policy.csv', 'reporte_poliza.csv');
+};
 
   const clearInventoryFilters = () => {
     setInvQ('');
@@ -1043,6 +1051,43 @@ export default function ReportesPage() {
                           </label>
                         ))
                       )}
+                    </div>
+                  </div>
+                </div>
+              </ReportCard>
+            )}             {canExportInventory && (
+              <ReportCard
+                title="Reportes personalizados"
+                description="Descarga reportes especiales solicitados para procesos administrativos y de control."
+                icon={<FileSpreadsheet className="h-5 w-5" />}
+                badge="1 reporte"
+                footer={
+                  <button
+                    type="button"
+                    onClick={downloadPolicyReport}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#1B3859] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#132B45]"
+                  >
+                    <Download className="h-4 w-4" />
+                    Descargar reporte de póliza
+                  </button>
+                }
+              >
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#3C9CD1]/10 text-[#1B3859]">
+                      <FileSpreadsheet className="h-5 w-5" />
+                    </div>
+
+                    <div>
+                      <p className="text-sm font-semibold text-[#1B3859]">
+                        Reporte de Póliza
+                      </p>
+
+                      <p className="mt-1 text-sm leading-6 text-slate-600">
+                        Exporta activos con categoría, tipo de activo, marca,
+                        modelo, serie, bodega asignada, proveedor, factura,
+                        fecha de compra y valor de compra.
+                      </p>
                     </div>
                   </div>
                 </div>

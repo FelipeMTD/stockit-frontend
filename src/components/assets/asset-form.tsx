@@ -53,6 +53,8 @@ export type AssetFormValue = {
   siteId: string;
   currentLocationId: string;
   assignedWarehouseId: string;
+    currentCustodianName: string;
+  currentCustodianDocumentId: string;
 };
 
 export type AssetFormPayload = {
@@ -110,11 +112,11 @@ const ESTADOS_DE_VIDA: Array<{
 
 const TIPOS_ADQUISICION = [
   { value: '', label: 'Sin definir' },
-  { value: 'Compra', label: 'Compra' },
-  { value: 'Arrendamiento', label: 'Arrendamiento' },
-  { value: 'Donación', label: 'Donación' },
-  { value: 'Reposición', label: 'Reposición' },
-  { value: 'Otro', label: 'Otro' },
+  { value: 'PURCHASE', label: 'Compra' },
+  { value: 'LEASE', label: 'Arrendamiento' },
+  { value: 'DONATION', label: 'Donación' },
+  { value: 'INTERNAL', label: 'Reposición / Interna' },
+  { value: 'OTHER', label: 'Otro' },
 ];
 
 const NIVELES_RIESGO = [
@@ -160,6 +162,8 @@ export function emptyAssetFormValue(): AssetFormValue {
     siteId: '',
     currentLocationId: '',
     assignedWarehouseId: '',
+        currentCustodianName: '',
+    currentCustodianDocumentId: '',
   };
 }
 
@@ -220,7 +224,7 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="grid gap-1.5">
+    <div className="grid min-w-0 gap-1.5">
       <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
         {label}
         {required && <span className="ml-1 text-red-500">*</span>}
@@ -257,8 +261,7 @@ function TextInput({
       placeholder={placeholder}
       onChange={(event) => onChange(event.target.value)}
       autoComplete="off"
-      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10"
-    />
+className="h-10 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10"    />
   );
 }
 
@@ -281,10 +284,23 @@ function SelectInput({
       required={required}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
-      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10 disabled:cursor-not-allowed disabled:opacity-50"
-    >
+className="h-10 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-[#3C9CD1] focus:ring-4 focus:ring-[#3C9CD1]/10 disabled:cursor-not-allowed disabled:opacity-50"    >
       {children}
     </select>
+  );
+}
+
+function ReadOnlyBox({
+  value,
+  placeholder = 'Sin registro',
+}: {
+  value?: string | null;
+  placeholder?: string;
+}) {
+  return (
+    <div className="flex min-h-10 w-full min-w-0 items-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700">
+      <span className="truncate">{value || placeholder}</span>
+    </div>
   );
 }
 
@@ -346,6 +362,41 @@ export default function AssetForm({
       : availableNamesRaw;
 
   const selectedSiteId = form.siteId || '';
+
+const selectedSite = siteItems.find((site: any) => site.id === form.siteId);
+
+const selectedWarehouse = allLocations.find(
+  (location: any) => location.id === form.assignedWarehouseId,
+);
+
+const selectedCurrentLocation = allLocations.find(
+  (location: any) => location.id === form.currentLocationId,
+);
+
+const currentLocationLabel = (() => {
+  const custodianName = form.currentCustodianName?.trim();
+  const custodianDocument = form.currentCustodianDocumentId?.trim();
+
+  if (form.status === 'ASSIGNED') {
+    if (custodianName) {
+      return custodianDocument
+        ? `Custodio: ${custodianName} - Doc. ${custodianDocument}`
+        : `Custodio: ${custodianName}`;
+    }
+
+    return 'Asignado a custodio';
+  }
+
+  if (form.currentLocationId && selectedCurrentLocation?.name) {
+    return selectedCurrentLocation.name;
+  }
+
+  if (form.status === 'IN_STOCK' && selectedWarehouse?.name) {
+    return selectedWarehouse.name;
+  }
+
+  return 'Sin ubicación actual registrada';
+})();
 
   const warehouses = useMemo(() => {
     if (!allLocations.length) return [];
@@ -437,9 +488,10 @@ export default function AssetForm({
     }
 
     const shouldDefaultToWarehouse =
-      form.status === 'IN_STOCK' &&
-      (!form.currentLocationId || form.currentLocationId === '') &&
-      !!form.assignedWarehouseId;
+  mode === 'create' &&
+  form.status === 'IN_STOCK' &&
+  (!form.currentLocationId || form.currentLocationId === '') &&
+  !!form.assignedWarehouseId;
 
     const payload: AssetFormPayload = {
       tag,
@@ -561,87 +613,148 @@ export default function AssetForm({
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                              <section className="rounded-2xl border border-slate-200 bg-white p-4">
             <div className="mb-4 flex items-start gap-3">
               <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#54BF5B]/10 text-[#16803A]">
                 <Building2 className="h-5 w-5" />
               </div>
 
-              <div>
+              <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-[#1B3859]">
-                  Ubicación y estado
+                  {mode === 'edit'
+                    ? 'Ubicación y custodia'
+                    : 'Ubicación inicial y estado'}
                 </h2>
+
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  {mode === 'edit'
+                    ? 'La ubicación, bodega, custodio y estado operativo se actualizan mediante movimientos.'
+                    : 'Define la ubicación inicial del activo al momento de crearlo.'}
+                </p>
               </div>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-3">
-              <Field label="Sede">
-                <SelectInput
-                  value={form.siteId || ''}
-                  onChange={(value) => {
-                    set('siteId', value);
-                    set('assignedWarehouseId', '');
-                    set('currentLocationId', '');
-                  }}
-                >
-                  <option value="">Sin sede</option>
+            {mode === 'edit' && (
+              <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                Para cambiar bodega, custodio, ubicación actual o estado
+                operativo, registra un movimiento del activo. Esta pantalla solo
+                permite editar datos administrativos y técnicos.
+              </div>
+            )}
 
-                  {siteItems.map((site: any) => (
-                    <option key={site.id} value={site.id}>
-                      {site.name}
-                    </option>
-                  ))}
-                </SelectInput>
+            {mode === 'create' && (
+              <div className="mb-4 rounded-2xl border border-[#3C9CD1]/20 bg-[#3C9CD1]/5 p-3 text-xs leading-5 text-slate-600">
+                <p>
+                  <span className="font-semibold text-[#1B3859]">
+                    Bodega base / retorno:
+                  </span>{' '}
+                  bodega principal a la que vuelve el activo cuando se recoge.
+                </p>
+
+                <p className="mt-1">
+                  <span className="font-semibold text-[#1B3859]">
+                    Ubicación física actual:
+                  </span>{' '}
+                  úsala solo si el activo está físicamente en un lugar distinto
+                  a su bodega base.
+                </p>
+              </div>
+            )}
+
+            <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <Field label="Sede">
+                {mode === 'edit' ? (
+                  <ReadOnlyBox value={selectedSite?.name} placeholder="Sin sede" />
+                ) : (
+                  <SelectInput
+                    value={form.siteId || ''}
+                    onChange={(value) => {
+                      set('siteId', value);
+                      set('assignedWarehouseId', '');
+                      set('currentLocationId', '');
+                    }}
+                  >
+                    <option value="">Sin sede</option>
+
+                    {siteItems.map((site: any) => (
+                      <option key={site.id} value={site.id}>
+                        {site.name}
+                      </option>
+                    ))}
+                  </SelectInput>
+                )}
               </Field>
 
-              <Field
-                label="Bodega asignada"
-                hint="Si el activo está en bodega y no tiene ubicación actual, se usará esta bodega."
-              >
-                <SelectInput
-                  value={form.assignedWarehouseId || ''}
-                  onChange={(value) => set('assignedWarehouseId', value)}
-                >
-                  <option value="">Sin bodega</option>
+              <Field label="Bodega base / retorno">
+                {mode === 'edit' ? (
+                  <ReadOnlyBox
+                    value={selectedWarehouse?.name}
+                    placeholder="Sin bodega base"
+                  />
+                ) : (
+                  <SelectInput
+                    value={form.assignedWarehouseId || ''}
+                    onChange={(value) => set('assignedWarehouseId', value)}
+                  >
+                    <option value="">Sin bodega base</option>
 
-                  {warehouses.map((location: any) => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
-                    </option>
-                  ))}
-                </SelectInput>
+                    {warehouses.map((location: any) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </SelectInput>
+                )}
               </Field>
 
               <Field label="Ubicación actual">
-                <SelectInput
-                  value={form.currentLocationId || ''}
-                  onChange={(value) => set('currentLocationId', value)}
-                >
-                  <option value="">Sin ubicación</option>
+                {mode === 'edit' ? (
+                  <ReadOnlyBox
+                    value={currentLocationLabel}
+                    placeholder="Sin ubicación actual registrada"
+                  />
+                ) : (
+                  <SelectInput
+                    value={form.currentLocationId || ''}
+                    onChange={(value) => set('currentLocationId', value)}
+                  >
+                    <option value="">Sin ubicación específica</option>
 
-                  {locationOptions.map((location: any) => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
-                    </option>
-                  ))}
-                </SelectInput>
+                    {locationOptions.map((location: any) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </SelectInput>
+                )}
               </Field>
             </div>
 
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div className="mt-4 grid min-w-0 gap-4 md:grid-cols-2">
               <Field label="Estado operativo">
-                <SelectInput
-                  value={form.status}
-                  onChange={(value) =>
-                    set('status', value as AssetOperationalStatus)
-                  }
-                >
-                  {ESTADOS_OPERATIVOS.map((status) => (
-                    <option key={status.value} value={status.value}>
-                      {status.label}
-                    </option>
-                  ))}
-                </SelectInput>
+                {mode === 'edit' ? (
+                  <ReadOnlyBox
+                    value={
+                      ESTADOS_OPERATIVOS.find(
+                        (status) => status.value === form.status,
+                      )?.label || form.status
+                    }
+                    placeholder="Sin estado operativo"
+                  />
+                ) : (
+                  <SelectInput
+                    value={form.status}
+                    onChange={(value) =>
+                      set('status', value as AssetOperationalStatus)
+                    }
+                  >
+                    {ESTADOS_OPERATIVOS.map((status) => (
+                      <option key={status.value} value={status.value}>
+                        {status.label}
+                      </option>
+                    ))}
+                  </SelectInput>
+                )}
               </Field>
 
               <Field label="Estado del activo">
@@ -739,7 +852,7 @@ export default function AssetForm({
                 />
               </Field>
 
-              <Field label="Tipo de adquisición">
+              <Field label="Tipo de compra">
                 <SelectInput
                   value={form.acquisitionType}
                   onChange={(value) => set('acquisitionType', value)}

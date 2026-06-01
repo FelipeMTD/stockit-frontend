@@ -60,10 +60,12 @@ function mapAssetToFormValue(asset: any): Partial<AssetFormValue> {
     photoUrl: asset?.photoUrl || '',
     notes: asset?.notes || '',
     siteId: asset?.site?.id || asset?.siteId || '',
-    currentLocationId:
+      currentLocationId:
       asset?.currentLocation?.id || asset?.currentLocationId || '',
     assignedWarehouseId:
       asset?.assignedWarehouse?.id || asset?.assignedWarehouseId || '',
+    currentCustodianName: asset?.currentCustodian?.fullName || '',
+    currentCustodianDocumentId: asset?.currentCustodian?.documentId || '',
   };
 }
 

@@ -110,7 +110,6 @@ function translateStatus(status?: string | null) {
 
   return map[String(status || '')] || String(status || '—');
 }
-
 function translateLifeState(status?: string | null) {
   const map: Record<string, string> = {
     ACTIVE: 'Activo',
@@ -120,6 +119,19 @@ function translateLifeState(status?: string | null) {
 
   return map[String(status || '')] || String(status || '—');
 }
+
+function translateAcquisitionType(value?: string | null) {
+  const map: Record<string, string> = {
+    PURCHASE: 'Compra',
+    LEASE: 'Arrendamiento',
+    DONATION: 'Donación',
+    INTERNAL: 'Reposición / Interna',
+    OTHER: 'Otro',
+  };
+
+  return map[String(value || '')] || String(value || '—');
+}
+
 
 function getApiBase() {
   const raw =
@@ -346,8 +358,8 @@ export default function AssetDetailPage() {
 
       toast.error(
         err?.response?.data?.error ||
-          err?.message ||
-          'No se pudo abrir el archivo.',
+        err?.message ||
+        'No se pudo abrir el archivo.',
       );
     }
   };
@@ -464,8 +476,8 @@ export default function AssetDetailPage() {
     onError: (err: any) => {
       toast.error(
         err?.response?.data?.error ??
-          err?.message ??
-          'Error al cargar el anexo.',
+        err?.message ??
+        'Error al cargar el anexo.',
       );
     },
   });
@@ -488,8 +500,8 @@ export default function AssetDetailPage() {
     onError: (err: any) => {
       toast.error(
         err?.response?.data?.error ??
-          err?.message ??
-          'Error al eliminar el anexo.',
+        err?.message ??
+        'Error al eliminar el anexo.',
       );
     },
   });
@@ -509,8 +521,8 @@ export default function AssetDetailPage() {
     onError: (err: any) => {
       toast.error(
         err?.response?.data?.error ??
-          err?.message ??
-          'Error al eliminar el activo. Es posible que tenga movimientos asociados.',
+        err?.message ??
+        'Error al eliminar el activo. Es posible que tenga movimientos asociados.',
       );
     },
   });
@@ -550,8 +562,8 @@ export default function AssetDetailPage() {
 
       toast.error(
         err?.response?.data?.error ||
-          err?.message ||
-          'No se pudo abrir el anexo.',
+        err?.message ||
+        'No se pudo abrir el anexo.',
       );
     }
   };
@@ -751,32 +763,27 @@ export default function AssetDetailPage() {
                   <InfoItem
                     label="Ubicación actual"
                     value={
-                      asset.currentLocation?.name ||
-                      asset.assignedWarehouse?.name ||
-                      '—'
+                      asset.status === 'ASSIGNED'
+                        ? asset.currentCustodian?.fullName
+                          ? (
+                            <span>
+                              Custodio: {asset.currentCustodian.fullName}
+                              {asset.currentCustodian.documentId && (
+                                <span className="block text-xs text-slate-500">
+                                  Documento: {asset.currentCustodian.documentId}
+                                </span>
+                              )}
+                            </span>
+                          )
+                          : 'Asignado a custodio'
+                        : asset.currentLocation?.name || '—'
                     }
                   />
                   <InfoItem
-                    label="Bodega asignada"
+                    label="Bodega base / retorno"
                     value={asset.assignedWarehouse?.name}
                   />
-                  <InfoItem
-                    label="Custodio"
-                    value={
-                      asset.currentCustodian?.fullName ? (
-                        <span>
-                          {asset.currentCustodian.fullName}
-                          {asset.currentCustodian.documentId && (
-                            <span className="block text-xs text-slate-500">
-                              Documento: {asset.currentCustodian.documentId}
-                            </span>
-                          )}
-                        </span>
-                      ) : (
-                        '—'
-                      )
-                    }
-                  />
+                 
                 </div>
               </section>
 
@@ -797,8 +804,8 @@ export default function AssetDetailPage() {
                   <InfoItem label="Proveedor" value={asset.supplierName} />
                   <InfoItem label="Factura" value={asset.invoiceNumber} />
                   <InfoItem
-                    label="Tipo adquisición"
-                    value={asset.acquisitionType}
+                    label="Tipo de compra"
+                    value={translateAcquisitionType(asset.acquisitionType)}
                   />
                   <InfoItem
                     label="Valor"
@@ -1001,7 +1008,7 @@ export default function AssetDetailPage() {
                                     handlePreviewApiFile(
                                       handover.attachmentUrl,
                                       handover.attachmentName ||
-                                        'Soporte adicional',
+                                      'Soporte adicional',
                                     )
                                   }
                                   className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-[#1B3859] transition hover:bg-slate-50"
@@ -1314,8 +1321,7 @@ export default function AssetDetailPage() {
                             onClick={() =>
                               handlePreviewApiFile(
                                 comodatoUrl,
-                                `Comodato_${
-                                  handoverId || selectedMovement.id
+                                `Comodato_${handoverId || selectedMovement.id
                                 }.pdf`,
                               )
                             }
