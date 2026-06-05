@@ -57,7 +57,7 @@ export default function MovementActions({
   const [selPersonId, setSelPersonId] = useState<string>('');
   const [selReturnLocId, setSelReturnLocId] = useState<string>('');
   const [selTransferLocId, setSelTransferLocId] = useState<string>('');
-  
+
   // 2. ESTADO PARA LA FIRMA OBLIGATORIA EN TRASLADOS
   const [selTransferSignature, setSelTransferSignature] = useState<string>('');
 
@@ -74,7 +74,7 @@ export default function MovementActions({
 
         const [p, l] = await Promise.all([
           api.get<Paginated<Person>>('/api/people', {
-            params: { pageSize: 200 }, 
+            params: { pageSize: 200 },
             withCredentials: true,
           }),
           api.get<{ items: Location[] }>('/api/catalog/locations', {
@@ -89,8 +89,7 @@ export default function MovementActions({
         const url = e?.config?.url;
         const status = e?.response?.status;
         toast.error(
-          `No se pudieron cargar listas${status ? ` (HTTP ${status})` : ''}${
-            url ? ` — ${url}` : ''
+          `No se pudieron cargar listas${status ? ` (HTTP ${status})` : ''}${url ? ` — ${url}` : ''
           }`
         );
       } finally {
@@ -142,7 +141,7 @@ export default function MovementActions({
 
   const disabledAssign = !selPersonId || submitting !== null;
   const disabledReturn = !selReturnLocId || submitting !== null;
-  
+
   // 4. EL BOTÓN REQUIERE UBICACIÓN, FIRMA Y SABER DÓNDE ESTABA EL EQUIPO
   const disabledTransfer = !selTransferLocId || !selTransferSignature || !currentLocationId || submitting !== null;
 
@@ -224,10 +223,9 @@ export default function MovementActions({
             {/* Transferir ubicación (CON FIRMA OBLIGATORIA) */}
             <div className="rounded-xl border p-4">
               <div className="font-medium mb-2">Transferir ubicación</div>
-              
               {!currentLocationId && (
                 <div className="text-xs text-red-500 mb-2">
-                  No se detectó la ubicación actual del activo. No se puede transferir.
+                  No se detectó la bodega base actual del activo. No se puede trasladar.
                 </div>
               )}
 
@@ -238,7 +236,7 @@ export default function MovementActions({
                   value={selTransferLocId}
                   onChange={(e) => setSelTransferLocId(e.target.value)}
                 >
-                  <option value="">Selecciona nueva ubicación</option>
+                  <option value="">Selecciona nueva bodega base / retorno</option>
                   {locations.map((l) => (
                     <option key={l.id} value={l.id}>
                       {l.name}
@@ -252,7 +250,7 @@ export default function MovementActions({
                     <span>Firma de quien recibe (Obligatorio)</span>
                   </div>
                   <div className="bg-white">
-                    <SignaturePad 
+                    <SignaturePad
                       value={selTransferSignature}
                       onChange={(dataUrl) => setSelTransferSignature(dataUrl || '')}
                     />
@@ -263,17 +261,17 @@ export default function MovementActions({
                   <button
                     onClick={() =>
                       // 5. ENVIAMOS ORIGEN, DESTINO Y FIRMA
-                      runMovement({ 
-                        type: 'TRANSFER', 
+                      runMovement({
+                        type: 'TRANSFER',
                         toLocationId: selTransferLocId,
-                        fromLocationId: currentLocationId, 
-                        signatureData: selTransferSignature 
+                        fromLocationId: currentLocationId,
+                        signatureData: selTransferSignature
                       })
                     }
                     disabled={disabledTransfer}
                     className="rounded-xl bg-sky-600 text-white px-6 py-2 text-sm hover:bg-sky-700 disabled:opacity-60"
                   >
-                    {submitting === 'TRANSFER' ? 'Transfiriendo…' : 'Transferir'}
+                    {submitting === 'TRANSFER' ? 'Trasladando…' : 'Trasladar'}
                   </button>
                 </div>
               </div>
